@@ -1,0 +1,208 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 20px;
+  background-color: #f9f9f9;
+}
+
+h2 { color: #333; }
+
+form {
+  background-color: #fff;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  margin-bottom: 30px;
+  max-width: 700px;
+}
+
+form h3 { margin-top: 0; color: #444; }
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 15px;
+}
+
+.form-group {
+  flex: 1 1 200px;
+  margin-right: 20px;
+  margin-bottom: 10px;
+}
+
+.form-group:last-child { margin-right: 0; }
+
+label { display: block; font-weight: bold; margin-bottom: 5px; }
+
+input[type="text"], input[type="number"], input[type="date"], select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+input[type="date"] { border: 2px solid #1abc9c; background-color: #eafaf5; }
+
+input.missed-days { border: 2px solid #f39c12; background-color: #fff8e1; }
+
+button {
+  background-color: #1abc9c;
+  color: white;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+button:hover { background-color: #16a085; }
+
+#calendar {
+  max-width: 900px;
+  margin-bottom: 40px;
+  background-color: #fff;
+  padding: 10px;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+#legend {
+  max-width: 700px;
+  background-color: #fff;
+  padding: 15px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+#legend ul { list-style: none; padding: 0; margin: 0; }
+
+#legend li { margin: 5px 0; font-weight: bold; }
+
+/* Modal */
+#eventModal {
+  display: none;
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  z-index: 999;
+  max-width: 90%;
+}
+
+#eventModal #closeModal {
+  float: right;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 20px;
+}
+
+#eventModal {
+  display: none;
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  z-index: 999;
+  max-width: 90%;
+  width: 320px;
+  word-wrap: break-word;
+}
+
+#eventModal h4 {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+#eventModal p {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+@media (max-width: 480px) {
+  #eventModal {
+    width: 90%;
+    padding: 15px;
+  }
+
+  #eventModal h4 {
+    font-size: 16px;
+  }
+
+  #eventModal p {
+    font-size: 13px;
+  }
+}
+#eventModal {
+  display: none;
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 0; /* padding will be inside header & content separately */
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  z-index: 999;
+  max-width: 90%;
+  width: 320px;
+  word-wrap: break-word;
+  overflow: hidden;
+}
+
+#modalTitle {
+  font-size: 18px;
+}
+
+#modalDetails {
+  padding: 15px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+@media (max-width: 480px) {
+  #eventModal {
+    width: 90%;
+  }
+
+  #modalTitle {
+    font-size: 16px;
+  }
+
+  #modalDetails {
+    font-size: 13px;
+  }
+}
+
+.toggle-btn {
+  background-color: #3498db;
+  color: #fff;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  margin-bottom: 10px;
+  transition: background-color 0.2s ease;
+}
+
+.toggle-btn:hover { background-color: #2980b9; }
+
+/* Smooth collapse/expand */
+#patientForm {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.5s ease, padding 0.3s ease;
+  padding: 0 20px; /* initial padding 0 top/bottom for collapsed */
+}
+
+#patientForm.show {
+  max-height: 2000px; /* large enough for full form */
+  padding: 20px; /* restore padding when expanded */
+}

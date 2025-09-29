@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Team Cycle Tracker</title>
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <h2>Team Cycle Tracker</h2>
+
+<!-- Collapsible Patient Form -->
+<button id="toggleFormBtn" class="toggle-btn">Add New Patient ▾</button>
+
+<form id="patientForm" method="POST" action="/add_patient" >
+  <h3>Add Patient</h3>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" required>
+    </div>
+    <div class="form-group">
+      <label for="age">Age</label>
+      <input type="number" id="age" name="age" required>
+    </div>
+    <div class="form-group">
+      <label for="sex">Sex</label>
+      <select id="sex" name="sex">
+        <option>Male</option>
+        <option>Female</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label for="address">Address</label>
+      <input type="text" id="address" name="address">
+    </div>
+    <div class="form-group">
+      <label for="regime">Regime</label>
+      <select id="regime" name="regime">
+        <option>IR</option>
+        <option>RR</option>
+        <option>CR</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="remark">Remark</label>
+      <input type="text" id="remark" name="remark">
+    </div>
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label for="start_date">Start Date</label>
+      <input type="date" id="start_date" name="start_date" required>
+    </div>
+    <div class="form-group">
+      <label for="missed_days">Missed Days</label>
+      <input type="number" id="missed_days" name="missed_days" value="0" class="missed-days">
+    </div>
+  </div>
+
+  <button type="submit">Add Patient Cycle</button>
+</form>
+
+  <!-- Calendar -->
+  <div id="calendar"></div>
+
+  <!-- Legend -->
+  <div id="legend">
+    <h4>Patient Colors</h4>
+    <ul>
+      {% for p in patients %}
+        {% if p.events %}
+          <li style="color: {{ p.events[0].color }}">{{ p.name }}</li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+  </div>
+
+  <!-- Event Modal -->
+  <div id="eventModal">
+    <span id="closeModal">&times;</span>
+    <h4 id="modalTitle"></h4>
+    <p id="modalDetails"></p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.js"></script>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
