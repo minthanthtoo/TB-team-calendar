@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.bak
+venv/
+instance/*.db  # optional, if you don't want to commit your local SQLite
+.DS_Store
+
+# IDEs
+*.idea/
+*.vscode/
