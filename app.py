@@ -23,9 +23,16 @@ class Patient(db.Model):
 class Event(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(50))
-    start = db.Column(db.String(20))   # ISO date string
-    color = db.Column(db.String(20))   # Event color
+    start = db.Column(db.String(20))
+    color = db.Column(db.String(20))
     patient_id = db.Column(db.Integer, db.ForeignKey("patient.id"))
+
+    # New fields for per-milestone data
+    missed_days = db.Column(db.Integer, default=0)
+    remark = db.Column(db.String(200))
+    outcome = db.Column(db.String(20))  # e.g., Failed, LTFU, Died, Cured, Completed
+
+    original_start = db.Column(db.String(20))  # store original planned date
 
 # ---- HELPER ----
 def get_unique_color():
@@ -46,16 +53,22 @@ def index():
 def events():
     events = Event.query.all()
     return jsonify([{
-        "title": e.title,
+        "id": e.id,  # <-- add this line
+        "title": f"{e.patient.name} - {e.title}",  # <-- include patient name
         "start": e.start,
         "color": e.color,
-        "patient": {
-            "name": e.patient.name,
-            "age": e.patient.age,
-            "sex": e.patient.sex,
-            "address": e.patient.address,
-            "regime": e.patient.regime,
-            "remark": e.patient.remark
+        "extendedProps": {  # per FullCalendar docs
+            "patient": {
+                "name": e.patient.name,
+                "age": e.patient.age,
+                "sex": e.patient.sex,
+                "address": e.patient.address,
+                "regime": e.patient.regime,
+                "remark": e.patient.remark
+            },
+            "missed_days": e.missed_days,
+            "remark": e.remark,
+            "outcome": e.outcome
         }
     } for e in events])
 
@@ -75,18 +88,116 @@ def add_patient():
 
     # Cycle info
     start_date = datetime.strptime(request.form["start_date"], "%Y-%m-%d")
-    missed_days = int(request.form.get("missed_days", 0))
+    #missed_days = int(request.form.get("missed_days", 0))
 
-    milestones = {"M1": 0, "M2": 31, "M3": 62, "M-end": 94}
+    # Correct milestones by regime
+    regime = p.regime.upper()
+    if regime in ["IR", "CR"]:
+        milestones = {
+            "Start": 0,   # start day
+            "M2": 56,
+            "M5": 140,
+            "M6/M-end": 168
+        }
+    elif regime == "RR":
+        milestones = {
+            "Start": 0,   # start day
+            "M3": 84,
+            "M5": 140,
+            "M8/M-end": 224
+        }
+    else:
+        milestones = {"Start": 0, "M1": 0}   # fallback for unknown regime
+
     color = get_unique_color()
 
     for label, offset in milestones.items():
-        d = start_date + timedelta(days=offset + (missed_days if offset > 0 else 0))
-        ev = Event(title=label, start=d.strftime("%Y-%m-%d"), color=color, patient_id=p.id)
+        # Apply +missed_days only to M-x (not M-end)
+        #m_missed = missed_days if "M-end" not in label else 0
+        m_missed = 0
+        d = start_date + timedelta(days=offset + m_missed)
+        
+        # Default outcome
+        # Default outcome: Start gets "Start", M-end gets "Cured", others empty
+        if label == "Start":
+            outcome_default = "Start"
+        elif "M-end" in label:
+            outcome_default = "Cured"
+        else:
+            outcome_default = ""
+        
+        ev = Event(
+            id=None,  # optional, SQLAlchemy auto-increments
+            title=label,
+            start=d.strftime("%Y-%m-%d"),
+            original_start=d.strftime("%Y-%m-%d"),
+            color=color,
+            patient_id=p.id,
+            missed_days=m_missed,
+            remark=p.remark,  # copy from patient
+            outcome=outcome_default
+        )
         db.session.add(ev)
 
     db.session.commit()
     return redirect(url_for("index"))
+
+from flask import request
+
+@app.route("/update_event", methods=["POST"])
+def update_event():
+    try:
+        data = request.get_json(force=True)
+        event_id = int(data.get("id"))
+        missed_days = int(data.get("missed_days", 0))
+        remark = data.get("remark", "").strip()
+        outcome = data.get("outcome", "").strip()
+
+        # Fetch event
+        ev = Event.query.get(event_id)
+        if not ev:
+            return jsonify(success=False, message="Event not found"), 404
+
+        # Validate outcome
+        if "M-end" in ev.title:
+            valid_outcomes = ["", "Cured", "Completed","Failed", "LTFU", "Died"]
+        else:
+            valid_outcomes = ["", "Failed", "LTFU", "Died"]
+
+        if outcome not in valid_outcomes:
+            return jsonify(success=False, message="Invalid outcome for this milestone"), 400
+
+        # Update fields
+        ev.missed_days = missed_days
+        ev.remark = remark
+        ev.outcome = outcome
+
+        # Shift date from original_start + missed_days
+        original_start = datetime.strptime(ev.original_start, "%Y-%m-%d")
+        new_start = original_start + timedelta(days=missed_days)
+        ev.start = new_start.strftime("%Y-%m-%d")
+
+        db.session.commit()
+        return jsonify(success=True)
+
+    except Exception as e:
+        print("Error updating event:", e)
+        return jsonify(success=False, message=str(e)), 500
+
+@app.route("/delete_patient/<int:patient_id>", methods=["POST"])
+def delete_patient(patient_id):
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify(success=False, message="Patient not found"), 404
+    
+    # Delete all events first
+    Event.query.filter_by(patient_id=patient.id).delete()
+    # Delete patient
+    db.session.delete(patient)
+    db.session.commit()
+    
+    return jsonify(success=True)
+
 
 if __name__ == "__main__":
     with app.app_context():
