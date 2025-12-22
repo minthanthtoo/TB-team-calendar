@@ -1465,36 +1465,49 @@ document.addEventListener('DOMContentLoaded', () => {
     // Create Team
     const createBtn = document.getElementById('createTeamBtn');
     if(createBtn) {
-        createBtn.onclick = () => {
-             const name = document.getElementById('newTeamName').value;
-             if(!name) return showToast("Enter a team name", "error");
-             
-             createBtn.innerHTML = "Creating... <span class='spinner'></span>";
-             createBtn.disabled = true;
-             
-             const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
-             
-             fetch('/api/teams/create', {
-                 method: 'POST',
-                 headers: {'Content-Type': 'application/json'},
-                 body: JSON.stringify({ name: name, user_name: 'Admin', device_id: deviceId })
-             })
-             .then(res => res.json())
-             .then(data => {
-                 createBtn.innerHTML = "Create";
-                 createBtn.disabled = false;
-                 if(data.success) {
-                     showToast("Team Created! You are now admin.");
-                     localStorage.setItem('tb_team_slug', data.team_slug);
-                     localStorage.setItem('tb_team_name', name);
-                     if(data.invite_code) localStorage.setItem('tb_team_invite_code', data.invite_code);
-                     
-                     updateMyTeamUI();
-                     loadTeams(); // Refresh list
-                 } else {
-                     showToast(data.message, "error");
-                 }
-             });
+        createBtn.onclick = function() {
+              const nameInput = document.getElementById('newTeamName');
+              const publicCtx = document.getElementById('newTeamPublic');
+              
+              const name = nameInput.value.trim();
+              const isPublic = publicCtx ? publicCtx.checked : false;
+
+              if(!name) return showToast("Enter a team name", "error");
+              
+              createBtn.innerHTML = "Creating... <span class='spinner'></span>";
+              createBtn.disabled = true;
+              
+              const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+              
+              fetch('/api/teams/create', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ name: name, user_name: 'Admin', device_id: deviceId, is_public: isPublic })
+              })
+              .then(res => res.json())
+              .then(data => {
+                  createBtn.innerHTML = "Create Team";
+                  createBtn.disabled = false;
+                  if(data.success) {
+                      showToast(`Team Created! Code: ${data.invite_code}`);
+                      nameInput.value = '';
+                      if(publicCtx) publicCtx.checked = false;
+
+                      localStorage.setItem('tb_team_slug', data.team_slug);
+                      localStorage.setItem('tb_team_name', name);
+                      if(data.invite_code) localStorage.setItem('tb_team_invite_code', data.invite_code);
+                      
+                      updateMyTeamUI();
+                      loadTeams(); // Refresh list
+                  } else {
+                      showToast(data.message, "error");
+                  }
+              })
+              .catch(err => {
+                  createBtn.innerHTML = "Create Team";
+                  createBtn.disabled = false;
+                  showToast("Connection Error", "error");
+              });
         };
     }
     
@@ -1576,6 +1589,7 @@ window.loadTeams = function() {
     list.innerHTML = '<div style="text-align:center; padding:10px;"><span class="spinner"></span></div>';
     
     const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+    const currentSlug = localStorage.getItem('tb_team_slug'); // Check active team
     
     fetch('/api/teams/list', {
         headers: { 'X-Device-ID': deviceId }
@@ -1584,23 +1598,31 @@ window.loadTeams = function() {
     .then(data => {
         if(!data.success) return;
         if(data.teams.length === 0) {
-            list.innerHTML = '<div style="padding:10px; color:#94a3b8; text-align:center;">No teams found (or not a member). Use Code to Join.</div>';
+            list.innerHTML = '<div style="padding:10px; color:#94a3b8; text-align:center;">No teams found. Create one or Join by Code.</div>';
             return;
         }
         
         let html = '';
-        const mySlug = localStorage.getItem('tb_team_slug');
-        
         data.teams.forEach(t => {
-            const isMine = t.slug === mySlug;
-            const btn = isMine 
-               ? '<span class="badge badge-completed">Joined</span>'
-               : `<button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="joinTeam('${t.slug}')">Join</button>`;
-               
+            const isJoined = t.joined;
+            const isActive = t.slug === currentSlug;
+            
+            const badge = isJoined ? '<span style="background:#dcfce7; color:#166534; font-size:0.6rem; padding:2px 4px; border-radius:4px; margin-right:5px;">MEMBER</span>' : 
+                          (t.is_public ? '<span style="background:#e0f2fe; color:#0369a1; font-size:0.6rem; padding:2px 4px; border-radius:4px; margin-right:5px;">PUBLIC</span>' : '');
+            
+            let btn = '';
+            if (isActive) {
+                 btn = `<button style="background:#f1f5f9; color:#64748b; border:none; border-radius:4px; padding:4px 8px; font-size:0.75rem;" disabled>Active</button>`;
+            } else if (isJoined) {
+                 btn = `<button onclick="switchTeam('${t.slug}', '${t.name}')" style="background:#fff; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
+            } else {
+                 btn = `<button onclick="joinTeam('${t.slug}')" style="background:#0f172a; color:white; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:0.75rem;">Join</button>`;
+            }
+                
             html += `
               <div class="team-list-item" style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid #f1f5f9;">
                   <div>
-                      <div style="font-weight:600; color:#334155;">${t.name}</div>
+                      <div style="font-weight:600; color:#334155;">${badge}${t.name}</div>
                       <div style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">${t.slug}</div>
                   </div>
                   <div>${btn}</div>
@@ -1609,6 +1631,16 @@ window.loadTeams = function() {
         });
         list.innerHTML = html;
     });
+}
+
+window.switchTeam = function(slug, name) {
+    localStorage.setItem('tb_team_slug', slug);
+    localStorage.setItem('tb_team_name', name);
+    // Reload data for this new team
+    showToast(`Switched to ${name}`);
+    updateMyTeamUI();
+    loadTeams(); // To update 'Active' button status
+    if(window.refreshPatientDataAndUI) window.refreshPatientDataAndUI();
 }
 
 window.joinTeam = function(slug) {

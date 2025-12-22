@@ -49,8 +49,11 @@ class Team(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     slug = db.Column(db.String(50), unique=True, nullable=False)
     name = db.Column(db.String(100), nullable=False)
-    invite_code = db.Column(db.String(20), unique=True) # New
+    invite_code = db.Column(db.String(20), unique=True)
+    is_public = db.Column(db.Boolean, default=False) # New: Public/Private toggle
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+# ...
 
 class TeamMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -60,12 +63,6 @@ class TeamMember(db.Model):
     status = db.Column(db.String(20), default='PENDING') # PENDING, APPROVED
     role = db.Column(db.String(20), default='MEMBER') # ADMIN, MEMBER
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-import socket
-
-
-import socket
 
 
 import socket
@@ -796,6 +793,7 @@ def after_request(response):
 def create_team():
     data = request.json
     name = data.get("name")
+    is_public = data.get("is_public", False) # Default to Private
     if not name: return jsonify(success=False, message="Name required"), 400
     
     # Simple Slugify
@@ -809,11 +807,10 @@ def create_team():
     chars = string.ascii_uppercase + string.digits
     code = f"{''.join(random.choices(chars, k=3))}-{''.join(random.choices(chars, k=3))}"
     
-    new_team = Team(name=name, slug=slug, invite_code=code)
+    new_team = Team(name=name, slug=slug, invite_code=code, is_public=is_public)
     db.session.add(new_team)
     
-    # Auto-approve creator (if we had auth, we'd link user. For now, create a 'Device Admin' member?)
-    # Assuming the device creating it is the 'Owner'.
+    # Auto-approve creator
     device_id = data.get("device_id", "Unknown")
     user_name = data.get("user_name", "Admin")
     
@@ -855,23 +852,42 @@ def join_team():
 
 @app.route("/api/teams/list", methods=["GET"])
 def list_teams():
-    # STRICT PRIVACY: Do NOT list all teams.
-    # Only return the user's current team if they are in one.
-    # To browse teams, they must know the slug/code.
-    
+    # Return Public Teams OR My Teams
     requester_device = request.headers.get('X-Device-ID')
-    if not requester_device:
-        return jsonify(success=True, teams=[])
-        
-    memberships = TeamMember.query.filter_by(device_id=requester_device).all()
-    my_teams = []
     
-    for m in memberships:
-        t = Team.query.filter_by(slug=m.team_slug).first()
-        if t:
-            my_teams.append({"slug": t.slug, "name": t.name, "created_at": t.created_at.isoformat()})
-            
-    return jsonify(success=True, teams=my_teams)
+    # 1. Get Public Teams
+    public_teams = Team.query.filter_by(is_public=True).all()
+    
+    # 2. Get My Teams (if device ID provided)
+    my_teams_slugs = set()
+    if requester_device:
+        memberships = TeamMember.query.filter_by(device_id=requester_device).all()
+        my_teams_slugs = {m.team_slug for m in memberships}
+        
+    combined_list = {}
+    
+    # Add Public
+    for t in public_teams:
+        combined_list[t.slug] = {
+            "slug": t.slug, "name": t.name, 
+            "created_at": t.created_at.isoformat(),
+            "is_public": True,
+            "joined": t.slug in my_teams_slugs
+        }
+        
+    # Add My Private Teams
+    for slug in my_teams_slugs:
+        if slug not in combined_list:
+            t = Team.query.filter_by(slug=slug).first()
+            if t:
+                combined_list[slug] = {
+                    "slug": t.slug, "name": t.name, 
+                    "created_at": t.created_at.isoformat(),
+                    "is_public": t.is_public,
+                    "joined": True
+                }
+                
+    return jsonify(success=True, teams=list(combined_list.values()))
 
 @app.route("/api/teams/members", methods=["GET"])
 def list_pending_members():
@@ -1029,7 +1045,14 @@ def secure_migrate():
             c.execute("ALTER TABLE team_member ADD COLUMN role VARCHAR(20) DEFAULT 'MEMBER'")
             # Upgrade existing APPROVED to ADMIN (Legacy fix)
             c.execute("UPDATE team_member SET role = 'ADMIN' WHERE status = 'APPROVED'")
-            
+
+        # 3. Check/Add 'is_public'
+        try:
+            c.execute("SELECT is_public FROM team LIMIT 1")
+        except sqlite3.OperationalError:
+            print("Migrating: Adding 'is_public' column...")
+            c.execute("ALTER TABLE team ADD COLUMN is_public BOOLEAN DEFAULT 0")
+
         conn.commit()
         conn.close()
 
