@@ -14,7 +14,12 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[Service Worker] Caching static assets');
-      return cache.addAll(ASSETS);
+      // Use logic to avoid failing whole install if one asset is missing (optional)
+      // For now, we stick to addAll but ensure list is correct.
+      return cache.addAll(ASSETS).catch(err => {
+          console.error("[Service Worker] Cache addAll failed", err);
+          // Don't fail install? 
+      });
     })
   );
   self.skipWaiting();
