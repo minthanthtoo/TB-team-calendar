@@ -338,7 +338,13 @@ document.addEventListener('DOMContentLoaded', function() {
       })
       .then(res => {
           if(res.status === 403) {
-              showToast("Access Denied: You are not approved for this team.", "error");
+              showToast("Access Denied. Resetting to guest permissions.", "error");
+              localStorage.removeItem('tb_team_slug');
+              localStorage.removeItem('tb_team_name');
+              localStorage.removeItem('tb_team_invite_code');
+              updateMyTeamUI();
+              // Trigger reload to fetch public/user data
+              setTimeout(() =>  window.refreshPatientDataAndUI(), 500);
               return { success: false };
           }
           return res.json();
@@ -1614,7 +1620,13 @@ window.loadTeams = function() {
             if (isActive) {
                  btn = `<button style="background:#f1f5f9; color:#64748b; border:none; border-radius:4px; padding:4px 8px; font-size:0.75rem;" disabled>Active</button>`;
             } else if (isJoined) {
-                 btn = `<button onclick="switchTeam('${t.slug}', '${t.name}')" style="background:#fff; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
+                 // Check Status
+                 if(t.status === 'APPROVED' || t.status === undefined) { 
+                     // Legacy or Approved
+                     btn = `<button onclick="switchTeam('${t.slug}', '${t.name}')" style="background:#fff; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
+                 } else {
+                     btn = `<button style="background:#fff7ed; color:#c2410c; border:1px solid #fdba74; border-radius:4px; padding:3px 8px; font-size:0.75rem;" disabled>Pending...</button>`;
+                 }
             } else {
                  btn = `<button onclick="joinTeam('${t.slug}')" style="background:#0f172a; color:white; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:0.75rem;">Join</button>`;
             }
@@ -1708,7 +1720,11 @@ window.updateMyTeamUI = function() {
                 const btn = document.createElement('div');
                 btn.style.marginTop = '15px';
                 btn.style.textAlign = 'right';
-                btn.innerHTML = `<button id="btn-disband-team" class="btn" style="background: var(--danger); color: white; font-size: 0.8rem; padding: 4px 10px;" onclick="triggerDisbandFlow('${slug}')">⚠️ Disband Team</button>`;
+                // Add Leave Button as well, reusing container? No, separate for now
+                btn.innerHTML = `
+                    <button id="btn-leave-team" class="btn" style="background: white; border:1px solid #cbd5e1; color: #475569; font-size: 0.8rem; padding: 4px 10px; margin-right:5px;" onclick="triggerLeaveFlow('${slug}')">Leave Team</button>
+                    <button id="btn-disband-team" class="btn" style="background: var(--danger); color: white; font-size: 0.8rem; padding: 4px 10px;" onclick="triggerDisbandFlow('${slug}')">⚠️ Disband Team</button>
+                `;
                 desc.parentNode.appendChild(btn);
             }
             
@@ -1894,6 +1910,40 @@ window.actionMember = function(id, action) {
     });
 }
 
+window.switchTeam = function(slug, name) {
+    localStorage.setItem('tb_team_slug', slug);
+    localStorage.setItem('tb_team_name', name);
+    showToast(`Switched to ${name}`);
+    updateMyTeamUI();
+    loadTeams();
+    if(window.refreshPatientDataAndUI) window.refreshPatientDataAndUI();
+}
+
+window.triggerLeaveFlow = function(slug) {
+    if(confirm("Are you sure you want to leave this team?")) {
+         const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+         fetch('/api/teams/leave', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json', 'X-Device-ID': deviceId },
+             body: JSON.stringify({ slug: slug })
+         })
+         .then(res => res.json())
+         .then(data => {
+             if(data.success) {
+                 showToast("Left team successfully.");
+                 localStorage.removeItem('tb_team_slug');
+                 localStorage.removeItem('tb_team_name');
+                 localStorage.removeItem('tb_team_invite_code');
+                 updateMyTeamUI();
+                 loadTeams();
+                 window.location.reload(); // Clean state
+             } else {
+                 showToast(data.message, "error");
+             }
+         });
+    }
+}
+
 window.triggerDisbandFlow = function(slug) {
     const modal = document.getElementById('disbandModal');
     const confirmBtn = document.getElementById('confirmDisbandBtn');
@@ -1933,10 +1983,15 @@ window.executeDisband = function(slug) {
     btn.innerHTML = 'Downloading... <span class="spinner"></span>';
     btn.disabled = true;
     
+    const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+    
     fetch('/api/teams/disband', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ slug: slug })
+        headers: { 
+            'Content-Type': 'application/json', 
+            'X-Device-ID': deviceId
+        },
+        body: JSON.stringify({ slug: slug, device_id: deviceId })
     })
     .then(res => res.json())
     .then(res => {

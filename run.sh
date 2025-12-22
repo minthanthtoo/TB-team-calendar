@@ -3,6 +3,10 @@
 pip install -r requirements.txt > /dev/null 2>&1
 
 # Run the Flask app
+# Kill existing instance if any
+pkill -f "python app.py" || true
+sleep 1
+
 echo "Starting Team Cycle Tracker..."
 echo "Please open http://127.0.0.1:5000 in your browser."
 # Run with Debug enabled for auto-reload

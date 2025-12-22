@@ -950,6 +950,30 @@ def team_stats():
         "size_bytes": size_bytes
     })
 
+@app.route("/api/teams/leave", methods=["POST"])
+def leave_team():
+    try:
+        data = request.json
+        slug = data.get("slug")
+        # Check Header first
+        requester_device = request.headers.get('X-Device-ID')
+        
+        member = TeamMember.query.filter_by(team_slug=slug, device_id=requester_device).first()
+        if not member:
+            return jsonify(success=False, message="Membership not found"), 404
+            
+        # Check Last Admin
+        if member.role == 'ADMIN':
+            admin_count = TeamMember.query.filter_by(team_slug=slug, role='ADMIN').count()
+            if admin_count <= 1:
+                return jsonify(success=False, message="Last Admin cannot leave. Assign another Admin or Disband."), 400
+                
+        db.session.delete(member)
+        db.session.commit()
+        return jsonify(success=True)
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
+
 @app.route("/api/teams/disband", methods=["POST"])
 def disband_team():
     try:
