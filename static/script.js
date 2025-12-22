@@ -44,6 +44,11 @@ document.addEventListener('DOMContentLoaded', function() {
   const isMobile = window.innerWidth < 768;
   const initialViewType = isMobile ? 'listMonth' : 'dayGridMonth';
 
+  // -- Configuration --
+  // Adjust Myanmar Calendar Calculation. 
+  // -1 aligns JDN to match user expectation (likely due to Noon vs Midnight JDN definition)
+  const MM_CAL_OFFSET = -1; 
+
   // Initialize Calendar
   var calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
     initialView: initialViewType,
@@ -59,7 +64,7 @@ document.addEventListener('DOMContentLoaded', function() {
     dayCellDidMount: function(info) {
         // Highlight Sabbath Days
         const d = info.date;
-        const jdn = ceDateTime.w2j(d.getFullYear(), d.getMonth() + 1, d.getDate());
+        const jdn = ceDateTime.w2j(d.getFullYear(), d.getMonth() + 1, d.getDate()) + MM_CAL_OFFSET;
         const isSabbath = ceMmDateTime.cal_sabbath(ceMmDateTime.j2m(jdn).md, ceMmDateTime.j2m(jdn).mm, ceMmDateTime.j2m(jdn).myt);
         if(isSabbath === 1) {
             info.el.classList.add('fc-day-sabbath');
@@ -78,7 +83,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             while (curr < end) {
               const y = curr.getFullYear(), m = curr.getMonth() + 1, d = curr.getDate();
-              const jdn = ceDateTime.w2j(y, m, d);
+              const jdn = ceDateTime.w2j(y, m, d) + MM_CAL_OFFSET;
               const mDate = ceMmDateTime.j2m(jdn); // {myt, my, mm, md}
               
               // 1. Public Holidays (Always show if possible, or bundle with toggle)
