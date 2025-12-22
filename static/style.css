@@ -614,3 +614,75 @@ input:focus, select:focus, textarea:focus {
     overflow-y: auto;
     max-height: 70vh;
 }
+
+/* --- Mobile Modal Optimization --- */
+@media (max-width: 768px) {
+    .modal-overlay {
+        padding: 0; /* Remove padding to allow full flush */
+        align-items: flex-end; /* Bottom sheet feel or just consistent alignment */
+    }
+    
+    .modal-content {
+        width: 100%;
+        max-width: 100%;
+        height: 100%; /* Full height */
+        max-height: 100vh; /* Force viewport height */
+        max-height: 100dvh; /* Dynamic viewport height for modern browsers */
+        border-radius: 0; /* consistent rect */
+        display: flex;
+        flex-direction: column;
+    }
+
+    .modal-body-scroll {
+        flex: 1; /* Take remaining space */
+        overflow-y: auto;
+    }
+    
+    /* Ensure header/footer stay visible if we want fixed header/footer? 
+       Currently modal content is just one big block. 
+       Use flex-basis autoscroll if content is structured that way.
+       If not, the whole modal-content scrolls (set in .modal-content previously).
+       
+       But wait, previous .modal-content had 'overflow-y: auto'. 
+       If we want fixed header/buttons on mobile, we need internal flex structure.
+       The current HTML in script.js injects raw HTML into modalDetails.
+       
+       For now, simple fullscreen scrolling is "Better" than clipped centering.
+    */
+    
+    .modal-content {
+        overflow-y: auto; /* Ensure the whole thing scrolls */
+    }
+}
+
+/* --- Sticky Footer Layout --- */
+.modal-header {
+    flex-shrink: 0;
+    padding: 10px 15px; /* Compact */
+    border-bottom: 1px solid var(--border-color);
+    background: white; 
+    z-index: 2;
+}
+
+.modal-body {
+    flex: 1; /* Fills remaining space */
+    overflow-y: auto; /* Internal scroll */
+    padding: 15px;
+}
+
+.modal-footer {
+    flex-shrink: 0; /* Stays at bottom */
+    padding: 10px 15px;
+    background: white;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    z-index: 2;
+}
+
+/* Compact Mobile Titles */
+@media (max-width: 768px) {
+    .modal-header h4 { font-size: 1rem; margin: 0; }
+    .form-section-title { margin-top: 0.5rem; margin-bottom: 0.5rem; }
+}

@@ -171,11 +171,13 @@ document.addEventListener('DOMContentLoaded', function() {
   window.openEventEditor = function(eventData, patient) {
       const modal = document.getElementById('eventModal');
       const modalTitle = document.getElementById('modalTitle');
-      const modalDetails = document.getElementById('modalDetails');
-      const modalHeader = modal.querySelector('.modal-header');
+      const modalFooter = document.getElementById('modalFooter');
 
       modalTitle.innerText = `${patient.name} - ${eventData.title}`;
       modalHeader.style.backgroundColor = eventData.backgroundColor;
+      // Reset body scroll
+      const bodyScroll = document.getElementById('modalBodyScroll');
+      if(bodyScroll) bodyScroll.scrollTop = 0;
 
       const isMEnd = eventData.title.includes("M-end");
       
@@ -185,6 +187,7 @@ document.addEventListener('DOMContentLoaded', function() {
         : ["", "Failed", "LTFU", "Died"];
       
       const outcomeLabels = {
+          "": "Ontario / Pending", // Just testing
           "": "Ongoing / Pending",
           "Cured": "✅ Cured",
           "Completed": "🏁 Completed",
@@ -203,51 +206,54 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const originalDate = new Date(eventData.startStr);
 
+      // Body (Form Fields)
       modalDetails.innerHTML = `
-        <div style="background: linear-gradient(to right, #f8fafc, #fff); padding: 1rem; border-left: 4px solid ${eventData.backgroundColor}; border-radius: 8px; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
-               <div style="font-size:1.1rem; font-weight:700; color:#334155;">${patient.name}</div>
-               <div style="font-size:0.8rem; background:#f1f5f9; padding:2px 8px; border-radius:12px; color:#64748b;">${patient.regime}</div>
+        <div style="background: linear-gradient(to right, #f8fafc, #fff); padding: 0.75rem; border-left: 4px solid ${eventData.backgroundColor}; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+               <div style="font-size:1rem; font-weight:700; color:#334155;">${patient.name}</div>
+               <div style="font-size:0.75rem; background:#f1f5f9; padding:2px 6px; border-radius:12px; color:#64748b;">${patient.regime}</div>
            </div>
-           <div style="font-size:0.85rem; color:#64748b;">
+           <div style="font-size:0.8rem; color:#64748b;">
              ID: <span style="font-family:monospace;">${patient.uid ? patient.uid.slice(0,4) : 'N/A'}</span> • ${patient.age}y/${patient.sex}
            </div>
         </div>
 
         <div class="form-section-title">📅 Schedule Management</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem;">
              <div>
-                <label>Planned Date</label>
-                <div style="padding:0.75rem; background:#f8fafc; border-radius:8px; color:#64748b; font-weight:500;">${eventData.startStr}</div>
+                <label>Planned</label>
+                <div style="padding:0.6rem; background:#f8fafc; border-radius:8px; color:#64748b; font-weight:500; font-size:0.9rem;">${eventData.startStr}</div>
              </div>
              <div>
-                <label>Adjusted Date</label>
-                <div id="modalDate" style="padding:0.75rem; background:#fff; border:2px solid ${eventData.backgroundColor}; border-radius:8px; color:${eventData.backgroundColor}; font-weight:700;">${eventData.startStr}</div>
+                <label>Adjusted</label>
+                <div id="modalDate" style="padding:0.6rem; background:#fff; border:2px solid ${eventData.backgroundColor}; border-radius:8px; color:${eventData.backgroundColor}; font-weight:700; font-size:0.9rem;">${eventData.startStr}</div>
              </div>
         </div>
 
-        <div class="form-group" style="margin-bottom: 1.5rem;">
+        <div class="form-group" style="margin-bottom: 1rem;">
            <label>Treatment Delay (Days)</label>
-           <div style="display:flex; align-items:center; gap:10px;">
-             <button class="btn btn-secondary" onclick="adjustMissed(-1)" style="width:40px; height:40px; font-weight:bold;">-</button>
-             <input type="number" id="modalMissedDays" value="${eventData.extendedProps.missed_days || 0}" style="text-align:center; font-size:1.1rem; font-weight:bold; width:80px; height:40px;" readonly>
-             <button class="btn btn-secondary" onclick="adjustMissed(1)" style="width:40px; height:40px; font-weight:bold;">+</button>
-             <span style="font-size:0.8rem; color:#64748b; margin-left:5px;">days spilled over</span>
+           <div style="display:flex; align-items:center; gap:8px;">
+             <button class="btn btn-secondary" onclick="adjustMissed(-1)" style="width:36px; height:36px; font-weight:bold;">-</button>
+             <input type="number" id="modalMissedDays" value="${eventData.extendedProps.missed_days || 0}" style="text-align:center; font-size:1rem; font-weight:bold; width:70px; height:36px;" readonly>
+             <button class="btn btn-secondary" onclick="adjustMissed(1)" style="width:36px; height:36px; font-weight:bold;">+</button>
+             <span style="font-size:0.75rem; color:#64748b; margin-left:5px;">days spilled</span>
            </div>
-           <p style="font-size:0.75rem; color:#ef4444; margin-top:5px;">⚠ Affects all future dates.</p>
         </div>
 
         <div class="form-section-title">🩺 Clinical Outcome</div>
         ${outcomeGridHtml}
         
-        <div class="form-section-title" style="margin-top:1.5rem;">📝 Notes</div>
-        <textarea id="modalRemark" rows="3" class="input-highlight" placeholder="Record clinical observations, complications, or patient feedback...">${eventData.extendedProps.remark || ''}</textarea>
-
-        <div style="margin-top: 2rem; display: flex; justify-content: flex-end; gap: 1rem;">
-           <button id="closeModalBtnSecondary" class="btn btn-secondary" style="border:none;">Cancel</button>
-           <button id="saveEventBtn" class="btn" style="min-width: 140px; background-color: ${eventData.backgroundColor}; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">💾 Save Record</button>
-        </div>
+        <div class="form-section-title" style="margin-top:1rem;">📝 Notes</div>
+        <textarea id="modalRemark" rows="2" class="input-highlight" placeholder="Notes..." style="padding:0.5rem;">${eventData.extendedProps.remark || ''}</textarea>
       `;
+
+      // Footer (Sticky Buttons)
+      if(modalFooter) {
+          modalFooter.innerHTML = `
+             <button id="closeModalBtnSecondary" class="btn btn-secondary" style="border:none;">Cancel</button>
+             <button id="saveEventBtn" class="btn" style="min-width: 140px; background-color: ${eventData.backgroundColor}; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">💾 Save</button>
+          `;
+      }
 
       // Show Modal
       modal.style.display = 'flex';
