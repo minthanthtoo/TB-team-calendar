@@ -610,9 +610,14 @@ document.addEventListener('DOMContentLoaded', function() {
           if(btn) btn.innerHTML = '🔄 Checking... <span class="spinner"></span>';
           container.innerHTML = `<span class="spinner"></span> Fetching updates (${displayTitle})...`;
           
-          fetch(`/api/get_staged_data?device=${encodeURIComponent(deviceName)}`)
-          .then(res => res.json())
+          fetch(`/api/get_staged_data?device=${encodeURIComponent(deviceName)}&_=${Date.now()}`)
+          .then(res => {
+              if(!res.ok) throw new Error(`Server Error: ${res.status}`);
+              return res.json();
+          })
           .then(data => {
+              if(!data.success && data.message) throw new Error(data.message);
+              
               const list = data.data || [];
               let newCount = 0;
               let updateCount = 0;
@@ -696,6 +701,11 @@ document.addEventListener('DOMContentLoaded', function() {
               html += `<button class="btn" style="width:100%;" onclick="acceptSelected()">Merge Selected (${totalItems})</button>`;
               
               container.innerHTML = html;
+          })
+          .catch(err => {
+              console.error("CheckIncoming Error:", err);
+              container.innerHTML = `<div style="color:var(--danger); padding:10px;">❌ Error fetching updates: ${err.message}</div>`;
+              if(btn) btn.innerHTML = '🔄 Retry List';
           });
   }
 
