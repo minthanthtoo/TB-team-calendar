@@ -142,7 +142,9 @@
             {% if p.events %}
               <li class="patient-item" style="border-left-color: {{ p.events[0].color }}">
                 <div style="display: flex; flex-direction: column;">
-                  <strong style="font-size: 0.95rem;">{{ p.name }}</strong> 
+                  <strong onclick="openPatientDetail('{{ p.uid }}')" style="font-size: 0.95rem; cursor: pointer; transition: color 0.1s;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='inherit'" title="View Details">
+                      {{ p.name }} <span style="font-weight: 400; font-size: 0.8rem; color: var(--primary); opacity: 0.7;">ⓘ</span>
+                  </strong> 
                   <span style="color: #475569; font-size: 0.8rem;">Age: {{ p.age }} • {{ p.sex }} • {{ p.regime }}</span>
                 </div>
                  <div style="margin-top: 5px;">
