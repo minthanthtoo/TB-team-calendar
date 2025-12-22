@@ -1681,105 +1681,60 @@ window.joinTeam = function(slug) {
 }
 
 window.updateMyTeamUI = function() {
-    const container = document.getElementById('myTeamSection'); // Ensure this ID exists or target correct container
-    // Note: The previous view showed updating 'myTeamDisplay', 'myTeamDesc' etc. 
-    // But the new design injects InnerHTML into a container. 
-    // Let's stick to the simpler ID targeting if the container isn't a single div.
-    
-    // Wait, the previous code updated specific elements. 
-    // If I want to inject the button, I need a place to put it. 
-    // Let's UPDATE the 'teamsModal' content or the 'myTeam' section in the modal.
-    // The previous view_file of index.html showed a 'teamsModal'.
-    // Let's assume we are updating the "Current Team" section inside that modal.
-    
     const slug = localStorage.getItem('tb_team_slug');
     const name = localStorage.getItem('tb_team_name') || slug;
     
     const display = document.getElementById('myTeamDisplay');
     const desc = document.getElementById('myTeamDesc');
+    const container = document.getElementById('teamActionsContainer');
     const badge = document.getElementById('teamBadge');
-    
-    // Also target the container for the button if possible, OR inject the button after the description.
-    // Let's find a container in the modal. 'teamsModal' has sections.
-    // Re-reading index.html would be safer but let's try to append the button to 'myTeamSection' if it exists, or just after myTeamDesc.
-    
-    // Actually, let's redefine this to inject the FULL HTML for the "Current Team" section if we can find the parent.
-    // Looking at index.html (implied), there is likely a div wrapping these details.
-    
-    // Fallback: If elements exist, update them. And try to append button if not present.
-    // But a cleaner way is to expect a container.
-    
-    // Let's use the logic I designed: specific element updates + button injection.
     
     if(slug) {
         if(display) display.innerText = name;
-        if(desc) {
-            desc.innerText = "You are syncing data for this team only.";
-        // Check if button already exists to avoid dupes
-            if(!document.getElementById('btn-disband-team')) {
-                const btn = document.createElement('div');
-                btn.style.marginTop = '15px';
-                btn.style.textAlign = 'right';
-                // Add Leave Button as well, reusing container? No, separate for now
-                btn.innerHTML = `
-                    <button id="btn-leave-team" class="btn" style="background: white; border:1px solid #cbd5e1; color: #475569; font-size: 0.8rem; padding: 4px 10px; margin-right:5px;" onclick="triggerLeaveFlow('${slug}')">Leave Team</button>
-                    <button id="btn-disband-team" class="btn" style="background: var(--danger); color: white; font-size: 0.8rem; padding: 4px 10px;" onclick="triggerDisbandFlow('${slug}')">⚠️ Disband Team</button>
-                `;
-                desc.parentNode.appendChild(btn);
-            }
-            
-            // Show Invite Code
-            const code = localStorage.getItem('tb_team_invite_code');
-            if(code) {
-                 if(!document.getElementById('invite-code-display')) {
-                     const codeDiv = document.createElement('div');
-                     codeDiv.id = 'invite-code-display';
-                     codeDiv.style.background = '#f0f9ff';
-                     codeDiv.style.border = '1px dashed #0ea5e9';
-                     codeDiv.style.color = '#0369a1';
-                     codeDiv.style.padding = '8px';
-                     codeDiv.style.borderRadius = '6px';
-                     codeDiv.style.marginTop = '10px';
-                     codeDiv.style.fontSize = '0.9rem';
-                     codeDiv.style.display = 'flex';
-                     codeDiv.style.justifyContent = 'space-between';
-                     codeDiv.style.alignItems = 'center';
-                     
-                     codeDiv.innerHTML = `
-                        <span>Invite Code: <strong style="font-family:monospace; font-size:1.1em;">${code}</strong></span>
-                        <div style="display:flex; gap:5px;">
-                            <button onclick="navigator.clipboard.writeText('${code}'); showToast('Code Copied!');" style="background:none; border:none; color:#0284c7; cursor:pointer;" title="Copy">📋</button>
-                            <a href="mailto:?subject=Join my TB Calendar Team&body=Here is the invite code to join my team: ${code}" style="text-decoration:none; color:#0284c7; cursor:pointer; font-size:1.2em;" title="Email Invite">✉️</a>
-                        </div>
-                     `;
-                     desc.parentNode.insertBefore(codeDiv, document.getElementById('btn-disband-team').parentNode);
-                 }
-            }
-        }
+        if(desc) desc.innerText = "Active Workspace";
         if(badge) {
             badge.style.display = 'inline-block';
             badge.innerText = slug.slice(0,3).toUpperCase();
         }
         
-        // Trigger Admin Check
+        // Show Actions
+        if(container) {
+            container.innerHTML = `
+                <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid #e2e8f0; display:flex; justify-content:center; gap:8px;">
+                     <button class="btn" style="background:white; border:1px solid #cbd5e1; color:#475569; font-size:0.85rem;" onclick="triggerLeaveFlow('${slug}')">Leave</button>
+                     <button class="btn" style="background:#fee2e2; border:1px solid #fca5a5; color:#ef4444; font-size:0.85rem;" onclick="triggerDisbandFlow('${slug}')">Disband</button>
+                </div>
+            `;
+            
+             // Invite Code
+            const code = localStorage.getItem('tb_team_invite_code');
+            if(code) {
+                container.innerHTML += `
+                    <div style="margin-top:1rem; background:#f0f9ff; padding:8px; border-radius:6px; border:1px dashed #0ea5e9; color:#0369a1; font-size:0.9rem; display:flex; justify-content:space-between; align-items:center;">
+                        <span>Invite Code: <strong style="font-family:monospace; font-size:1.2em;">${code}</strong></span>
+                        <div style="display:flex; gap:5px;">
+                            <button onclick="navigator.clipboard.writeText('${code}'); showToast('Code Copied!');" style="background:none; border:none; color:#0284c7; cursor:pointer;" title="Copy">📋</button>
+                            <a href="mailto:?subject=Join my TB Calendar Team&body=Here is the invite code to join my team: ${code}" style="text-decoration:none; color:#0284c7; cursor:pointer; font-size:1.2em;" title="Email Invite">✉️</a>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
         loadPendingMembers(slug);
         
     } else {
-        if(display) display.innerText = "Default (Public)";
-        if(desc) {
-            desc.innerText = "You are viewing/syncing all public data.";
-            // Remove button if it exists
-             const btn = document.getElementById('btn-disband-team');
-             if(btn) btn.parentNode.remove(); 
-             
-             const codeDiv = document.getElementById('invite-code-display');
-             if(codeDiv) codeDiv.remove();
-        }
+        // Guest Mode
+        if(display) display.innerText = "Guest Mode";
+        if(desc) desc.innerText = "Data is stored locally only.";
+        if(container) container.innerHTML = '';
         if(badge) badge.style.display = 'none';
         
-        // Hide Admin Section
-        const adminSec = document.getElementById('adminPendingSection');
-        if(adminSec) adminSec.style.display = 'none';
+        // Hide Admin Sections
+        const pSec = document.getElementById('adminPendingSection');
+        const aSec = document.getElementById('adminActiveSection');
+        if(pSec) pSec.style.display = 'none';
+        if(aSec) aSec.style.display = 'none';
     }
 }
 
@@ -2027,3 +1982,28 @@ window.executeDisband = function(slug) {
 
 // Initial check
 document.addEventListener('DOMContentLoaded', () => { setTimeout(window.updateMyTeamUI, 500); });
+
+// Tab Switching (Added in UI Redesign)
+window.switchTeamTab = function(tab) {
+    document.querySelectorAll('.team-tab-btn').forEach(b => {
+        b.style.borderBottom = '2px solid transparent';
+        b.style.color = '#64748b';
+        b.classList.remove('active');
+    });
+    document.querySelectorAll(`[onclick="switchTeamTab('${tab}')"]`).forEach(b => {
+        b.style.borderBottom = '2px solid #0f172a';
+        b.style.color = '#0f172a';
+        b.classList.add('active');
+    });
+    
+    const tMy = document.getElementById('tab-my-team');
+    const tDir = document.getElementById('tab-directory');
+    
+    if(tab === 'my-team') {
+        if(tMy) tMy.style.display = 'block';
+        if(tDir) tDir.style.display = 'none';
+    } else {
+        if(tMy) tMy.style.display = 'none';
+        if(tDir) tDir.style.display = 'block';
+    }
+}
