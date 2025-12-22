@@ -402,7 +402,7 @@ document.addEventListener('DOMContentLoaded', function() {
       });
   }
   
-  window.selectedDevice = null;
+  window.selectedDevice = 'all';
 
   // Host Info Polling
   window.pollHostInfo = function() {
@@ -415,30 +415,45 @@ document.addEventListener('DOMContentLoaded', function() {
           
           // Update Devices List
           const listDiv = document.getElementById('connectedDevicesList');
-          if(data.devices.length === 0) {
-              listDiv.innerHTML = '<span style="font-style:italic;">No active connections yet.</span>';
-              return;
-          }
           
           let html = '<ul style="list-style:none; padding:0; margin:0;">';
+          
+          // Add "Check All" Option
+          const isAll = window.selectedDevice === 'all';
+          const bgAll = isAll ? '#e0f2fe' : 'transparent';
+          const bdrAll = isAll ? '#0284c7' : 'transparent';
+          
+          let pendingCount = data.devices.filter(d => d.has_pending).length;
+          let pendingBadge = pendingCount > 0 ? `<span style="background:#ef4444; color:white; font-size:0.65rem; padding:1px 5px; border-radius:10px; margin-left:5px;">${pendingCount} sources</span>` : '';
+          
+          html += `
+             <li onclick="selectDevice('all')" style="display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:8px; cursor:pointer; background:${bgAll}; border-left:3px solid ${bdrAll}; transition: background 0.2s; font-weight:600; color:#334155;">
+                <span>👥 All Devices ${pendingBadge}</span>
+             </li>
+          `;
+
+          if(data.devices.length === 0) {
+              if(!pendingCount) html += '<li style="padding:10px; color:#94a3b8; font-style:italic; font-size:0.85rem;">No active connections.</li>';
+          } 
+          
           data.devices.forEach(d => {
-               // Styling for selection
                const isActive = window.selectedDevice === d.name;
                const bg = isActive ? '#e0f2fe' : 'transparent';
                const border = isActive ? '#0284c7' : 'transparent';
-               const pendingBadge = d.has_pending ? '<span style="width:8px; height:8px; background:#ef4444; border-radius:50%; display:inline-block; margin-left:5px;"></span>' : '';
+               const dot = d.has_pending ? '<span style="width:8px; height:8px; background:#ef4444; border-radius:50%; display:inline-block; margin-left:5px;"></span>' : '';
               
               html += `
                 <li onclick="selectDevice('${d.name}')" style="display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:6px 8px; cursor:pointer; background:${bg}; border-left:3px solid ${border}; transition: background 0.2s;">
                     <span>
                         <span style="font-weight:600; color:#334155;">${d.name}</span>
-                        ${pendingBadge} 
+                        ${dot} 
                         <span style="font-size:0.75rem; color:#94a3b8;">(${d.ip})</span>
                     </span>
                     <span class="badge" style="background:#f1f5f9; color:#475569;">${d.pushes} pushes</span>
                 </li>
               `;
           });
+          
           html += '</ul>';
           listDiv.innerHTML = html;
       })
@@ -583,32 +598,140 @@ document.addEventListener('DOMContentLoaded', function() {
           });
   }
 
-  window.acceptSelected = function() {
-          if(!window.selectedDevice) { showToast("No device selected", "error"); return; }
+  window.checkIncoming = function(deviceName) {
+          const container = document.getElementById('reviewContainer');
+          const btn = document.getElementById('checkUpdatesBtn');
           
+          // Default to current selection if not passed
+          if(!deviceName) deviceName = window.selectedDevice || 'all';
+          
+          const displayTitle = deviceName === 'all' ? 'All Devices' : deviceName;
+          
+          if(btn) btn.innerHTML = '🔄 Checking... <span class="spinner"></span>';
+          container.innerHTML = `<span class="spinner"></span> Fetching updates (${displayTitle})...`;
+          
+          fetch(`/api/get_staged_data?device=${encodeURIComponent(deviceName)}`)
+          .then(res => res.json())
+          .then(data => {
+              const list = data.data || [];
+              let newCount = 0;
+              let updateCount = 0;
+              let deleteCount = 0;
+              
+              list.forEach(p => {
+                  if(p.status === 'NEW') newCount++;
+                  if(p.status === 'UPDATE') updateCount++;
+                  if(p.status === 'DELETE') deleteCount++;
+              });
+
+              if (list.length === 0) {
+                  container.innerHTML = '<div style="color:#64748b; font-style:italic;">No pending updates from this device.</div>';
+                  if(btn) btn.innerHTML = '🔄 Update List';
+                  return;
+              }
+              
+              const totalItems = list.length;
+              if(btn) btn.innerHTML = `🔄 Updates: ${totalItems} items`;
+              
+              let html = `
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px; margin-bottom:10px; font-size:0.85rem; display:flex; gap:10px; align-items:center;">
+                    <div style="font-weight:600; color:#334155;">Summary:</div>
+                    <div style="color:#10b981;">New: ${newCount}</div>
+                    <div style="color:#3b82f6;">Updates: ${updateCount}</div>
+                    <div style="color:#ef4444;">Deleted: ${deleteCount}</div>
+                    <div style="margin-left:auto; font-size:0.75rem; color:#94a3b8;">${displayTitle}</div>
+                </div>
+
+                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                    <button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="toggleSyncChecks('all')">All</button>
+                    <button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="toggleSyncChecks('new')">New</button>
+                    <button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="toggleSyncChecks('update')">Updates</button>
+                    <button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="toggleSyncChecks('delete')">Del</button>
+                    <button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="toggleSyncChecks('none')">None</button>
+                </div>
+                <div style="max-height: 250px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:4px; margin-bottom:10px;">
+              `;
+              
+              data.data.forEach((p, idx) => {
+                  let tag = '';
+                  let style = '';
+                  let checked = 'checked';
+                  
+                  if (p.status === 'NEW') {
+                      tag = '<span style="color:#10b981; font-weight:700; font-size:0.7rem; margin-left:auto;">(New)</span>';
+                      style = 'font-weight:600; background:#f0fdf4;';
+                  } else if (p.status === 'UPDATE') {
+                      tag = '<span style="color:#3b82f6; font-weight:700; font-size:0.7rem; margin-left:auto;">(Update)</span>';
+                      style = 'font-weight:500; background:#eff6ff;';
+                  } else if (p.status === 'DELETE') {
+                      tag = '<span style="color:#ef4444; font-weight:700; font-size:0.7rem; margin-left:auto;">(DELETE)</span>';
+                      style = 'text-decoration: line-through; opacity: 0.8; background:#fef2f2; color:#b91c1c;';
+                  } else {
+                      tag = '<span style="color:#94a3b8; font-size:0.7rem; margin-left:auto;">(Same)</span>';
+                      style = 'opacity: 0.6; color:#64748b;';
+                      checked = ''; 
+                  }
+
+                  const uidShort = p.uid ? `<span style="font-family:monospace; font-size:0.65rem; color:#94a3b8; margin-left:4px;">#${p.uid.slice(0,4)}</span>` : '';
+                  // Safe processing of source_device
+                  const devName = p.source_device || deviceName;
+                  const deviceBadge = `<span style="background:#e2e8f0; color:#475569; padding:2px 4px; border-radius:4px; font-size:0.65rem; margin-right:6px;">${devName}</span>`;
+
+                  // Store device & original index in value for backend reconstruction
+                  // If aggregated, p.source_device and p.idx should exist. If not (legacy), use current.
+                  const valObj = { d: p.source_device || deviceName, i: (p.idx !== undefined ? p.idx : idx) };
+                  const val = encodeURIComponent(JSON.stringify(valObj));
+
+                  html += `
+                    <div style="padding: 4px 8px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; ${style}">
+                        <input type="checkbox" class="sync-check" value="${val}" data-status="${p.status}" ${checked}> 
+                        <span style="margin-left: 8px; font-size:0.9rem;">${p.name}</span>
+                        ${deviceBadge}
+                        ${uidShort}
+                        ${tag}
+                    </div>
+                  `;
+              });
+              html += '</div>';
+              html += `<button class="btn" style="width:100%;" onclick="acceptSelected()">Merge Selected (${totalItems})</button>`;
+              
+              container.innerHTML = html;
+          });
+  }
+
+  window.acceptSelected = function() {
           const checks = document.querySelectorAll('.sync-check:checked');
-          const indices = Array.from(checks).map(c => parseInt(c.value));
+          if(checks.length === 0) { showToast("No items selected"); return; }
+          
+          // Group by device
+          const commits = {}; 
+          
+          checks.forEach(c => {
+              try {
+                  const obj = JSON.parse(decodeURIComponent(c.value));
+                  if(!commits[obj.d]) commits[obj.d] = [];
+                  commits[obj.d].push(obj.i);
+              } catch(e) { console.error("Parse error", c.value); }
+          });
           
           fetch('/api/commit_staged', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({ 
-                  indices: indices,
-                  device: window.selectedDevice
+                  commits_by_device: commits
               })
           })
           .then(res => res.json())
           .then(data => {
                if(data.success) {
-                  showToast(`Merged ${data.count} records!`);
-                  // Refresh the view - should now be empty or updated
+                  showToast(`Merged ${data.count} records successfully!`);
                   checkIncoming(window.selectedDevice);
-                  // Optional: prompt reload if needed
-                  setTimeout(() => location.reload(), 1500);
+                  // Reload if essential
                } else {
                    showToast("Error: " + data.message, "error");
                }
           })
+          .catch(err => showToast("Network Error", "error"));
   }
 
 });
