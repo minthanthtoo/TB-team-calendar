@@ -41,6 +41,12 @@ document.addEventListener('DOMContentLoaded', function() {
   window.addEventListener('offline', updateNetworkStatus);
   updateNetworkStatus(); // Initial check
 
+  // Initialize Notification State
+  window.lastPendingCount = 0;
+  if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+      Notification.requestPermission();
+  }
+
   // -- Mobile Responsive View --
   const isMobile = window.innerWidth < 768;
   const initialViewType = isMobile ? 'listMonth' : 'dayGridMonth';
@@ -354,11 +360,42 @@ document.addEventListener('DOMContentLoaded', function() {
               // Update Sync Time
               if(data.timestamp) window.lastSyncTime = data.timestamp;
 
-              // Check Notifications
+              // Check Notifications (Persistent Badge & System Push)
               const badge = document.getElementById('teamRequestBadge');
               if(badge) {
                   const pending = (data.stats && data.stats.pending_requests) || 0;
+                  const lastPending = window.lastPendingCount || 0;
+                  
+                  // Restore missing or incorrect Invite Code
+                  if(data.stats && data.stats.invite_code) {
+                      const existing = localStorage.getItem('tb_team_invite_code');
+                      if(existing !== data.stats.invite_code) {
+                          localStorage.setItem('tb_team_invite_code', data.stats.invite_code);
+                          updateMyTeamUI(); // Refresh UI once code arrives/updates
+                      }
+                  }
+                  
+                  // Visual Badge (Persistent)
                   badge.style.display = pending > 0 ? 'block' : 'none';
+                  
+                  // System Notification (Push)
+                  if(pending > lastPending) {
+                      if(Notification.permission === "granted") {
+                          new Notification("New Team Request", {
+                              body: `${pending} user(s) waiting for approval.`,
+                              icon: '/static/icon.png' // Fallback if exists
+                          });
+                      } else if (Notification.permission !== "denied") {
+                          Notification.requestPermission().then(permission => {
+                              if (permission === "granted") {
+                                  new Notification("New Team Request", { body: "Check Team Management." });
+                              }
+                          });
+                      }
+                      showToast("🔔 New Join Request received!");
+                  }
+                  
+                  window.lastPendingCount = pending;
               }
               
               if(url.includes('&since=')) {
@@ -1475,6 +1512,32 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if(closeTeamsBtn) closeTeamsBtn.onclick = () => teamsModal.style.display = 'none';
     
+    // Join Code Lookup (Real-time Preview)
+    const joinCodeInput = document.getElementById('joinTeamCode');
+    const previewDiv = document.getElementById('joinCodePreview');
+    if(joinCodeInput && previewDiv) {
+        joinCodeInput.addEventListener('input', (e) => {
+            const code = e.target.value.trim().toUpperCase();
+            if(code.length === 7) {
+                previewDiv.innerHTML = '<span style="color:#64748b;">🔍 Looking up...</span>';
+                fetch(`/api/teams/lookup?code=${code}`)
+                .then(res => res.json())
+                .then(data => {
+                    if(data.success) {
+                        previewDiv.innerHTML = `<span style="color:#16a34a;">✅ Found: ${data.team_name}</span>`;
+                    } else {
+                        previewDiv.innerHTML = '<span style="color:#dc2626;">❌ Team not found</span>';
+                    }
+                })
+                .catch(() => {
+                    previewDiv.innerHTML = '';
+                });
+            } else {
+                previewDiv.innerHTML = '';
+            }
+        });
+    }
+    
     // Create Team
     const createBtn = document.getElementById('createTeamBtn');
     if(createBtn) {
@@ -1636,17 +1699,31 @@ window.loadTeams = function() {
                          btn = `<span style="font-size:0.75rem; font-weight:700; color:#166534; background:#dcfce7; padding:2px 8px; border-radius:12px;">ACTIVE</span>`;
                     } else {
                          if(t.status === 'APPROVED' || t.status === undefined) { 
-                             btn = `<button onclick="switchTeam('${t.slug}', '${t.name}')" style="background:#0f172a; color:white; border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
+                             btn = `<button onclick="switchTeam('${t.slug}', '${t.name}', '${t.invite_code || ''}')" style="background:#0f172a; color:white; border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
                          } else {
                              btn = `<span style="color:#c2410c; background:#fff7ed; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid #fdba74;">Pending</span>`;
                          }
                     }
                     
+                    const privacyBadge = t.is_public 
+                        ? '<span style="font-size:0.65rem; background:#e0f2fe; color:#0284c7; padding:2px 6px; border-radius:10px; border:1px solid #bae6fd;">PUBLIC</span>' 
+                        : '<span style="font-size:0.65rem; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:10px; border:1px solid #cbd5e1;">PRIVATE</span>';
+                    
                     html += `
                         <div style="background:white; border:1px solid ${isActive ? '#166534' : '#e2e8f0'}; padding:10px; border-radius:8px; display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <div style="font-weight:700; color:#334155; font-size:0.9rem;">${t.name}</div>
-                                <div style="font-size:0.7rem; color:#94a3b8;">${t.slug.toUpperCase()}</div>
+                                <div style="display:flex; align-items:center; gap:6px;">
+                                    <span style="font-weight:700; color:#334155; font-size:0.9rem;">${t.name}</span>
+                                    ${privacyBadge}
+                                </div>
+                                <div style="font-size:0.75rem; color:#64748b; margin-top:2px; display:flex; align-items:center; gap:8px;">
+                                    <span>👥 ${t.member_count} members</span>
+                                    ${t.invite_code ? `
+                                        <span style="color:#0369a1; background:#f0f9ff; padding:1px 6px; border-radius:4px; font-family:monospace; font-weight:700; border:1px dashed #0ea5e9; cursor:pointer;" onclick="event.stopPropagation(); navigator.clipboard.writeText('${t.invite_code}'); showToast('Code Copied!');" title="Click to copy">
+                                          ${t.invite_code}
+                                        </span>
+                                    ` : ''}
+                                </div>
                             </div>
                             <div>${btn}</div>
                         </div>
@@ -1663,14 +1740,21 @@ window.loadTeams = function() {
             } else {
                 let html = '';
                 publicTeams.forEach(t => {
+                    const privacyBadge = t.is_public 
+                        ? '<span style="font-size:0.65rem; background:#e0f2fe; color:#0284c7; padding:2px 6px; border-radius:10px; border:1px solid #bae6fd;">PUBLIC</span>'
+                        : '<span style="font-size:0.65rem; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:10px; border:1px solid #cbd5e1;">PRIVATE</span>';
+
                     html += `
-                      <div class="team-list-item" style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid #f1f5f9;">
+                      <div class="team-list-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid #f1f5f9;">
                           <div>
-                              <div style="font-weight:600; color:#334155;">${t.name}</div>
-                              <div style="font-size:0.75rem; color:#94a3b8;">${t.is_public ? 'Public Team' : 'Private'}</div>
+                              <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
+                                <div style="font-weight:600; color:#334155;">${t.name}</div>
+                                ${privacyBadge}
+                              </div>
+                              <div style="font-size:0.75rem; color:#64748b;">👥 ${t.member_count} members</div>
                           </div>
                           <div>
-                              <button onclick="joinTeam('${t.slug}')" style="background:white; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:0.75rem;">Join</button>
+                              <button onclick="joinTeam('${t.slug}')" style="background:white; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:0.75rem;">Join</button>
                           </div>
                       </div>
                     `;
@@ -1681,9 +1765,12 @@ window.loadTeams = function() {
     });
 }
 
-window.switchTeam = function(slug, name) {
+window.switchTeam = function(slug, name, inviteCode) {
     localStorage.setItem('tb_team_slug', slug);
     localStorage.setItem('tb_team_name', name);
+    if(inviteCode) localStorage.setItem('tb_team_invite_code', inviteCode);
+    else localStorage.removeItem('tb_team_invite_code'); // Clear if unknown
+    
     // Reload data for this new team
     showToast(`Switched to ${name}`);
     updateMyTeamUI();
@@ -2003,7 +2090,12 @@ window.executeDisband = function(slug) {
             localStorage.removeItem('tb_team_name');
             localStorage.removeItem('tb_team_status');
             
-            setTimeout(() => window.location.reload(), 2000);
+            setTimeout(() => {
+                document.getElementById('disbandModal').style.display = 'none';
+                updateMyTeamUI();
+                loadTeams();
+                if(window.refreshPatientDataAndUI) window.refreshPatientDataAndUI();
+            }, 2000);
         } else {
             throw new Error(res.message);
         }
@@ -2038,8 +2130,10 @@ window.switchTeamTab = function(tab) {
     if(tab === 'my-team') {
         if(tMy) tMy.style.display = 'block';
         if(tDir) tDir.style.display = 'none';
+        loadTeams(); // Refresh to show active status
     } else {
         if(tMy) tMy.style.display = 'none';
         if(tDir) tDir.style.display = 'block';
+        loadTeams(); // Ensure directory is loaded
     }
 }

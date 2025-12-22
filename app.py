@@ -313,8 +313,12 @@ def get_all_data():
     # ... Security Checks ...
     query = Patient.query
     pending_count = 0
+    invite_code = None
     
     if target_team and target_team != 'ALL' and target_team != 'DEFAULT':
+        team_rec = Team.query.filter_by(slug=target_team).first()
+        if team_rec: invite_code = team_rec.invite_code
+        
         # SECURITY CHECK
         # Must be APPROVED member of this team
         if not requester_device:
@@ -406,7 +410,7 @@ def get_all_data():
         for m in members
     ]
     
-    return jsonify(success=True, data=data, deleted=deleted_uids, teams=teams_data, members=members_data, timestamp=datetime.utcnow().isoformat(), stats={"pending_requests": pending_count})
+    return jsonify(success=True, data=data, deleted=deleted_uids, teams=teams_data, members=members_data, timestamp=datetime.utcnow().isoformat(), stats={"pending_requests": pending_count, "invite_code": invite_code})
 
 # 2. Merge Data (Guest pulls from Host -> Appends/Replaces Local)
 @app.route("/api/merge_data", methods=["POST"])
@@ -826,6 +830,17 @@ def create_team():
     db.session.commit()
     return jsonify(success=True, team_slug=slug, invite_code=code)
 
+@app.route("/api/teams/lookup", methods=["GET"])
+def lookup_team():
+    code = request.args.get('code')
+    if not code: return jsonify(success=False, message="Code required"), 400
+    
+    team = Team.query.filter(Team.invite_code.ilike(code)).first()
+    if not team:
+        return jsonify(success=False, message="Team not found"), 404
+        
+    return jsonify(success=True, team_name=team.name, team_slug=team.slug)
+
 @app.route("/api/teams/join", methods=["POST"])
 def join_team():
     data = request.json
@@ -874,11 +889,14 @@ def list_teams():
     
     # Add Public
     for t in public_teams:
+        is_joined = t.slug in my_teams_slugs
         combined_list[t.slug] = {
             "slug": t.slug, "name": t.name, 
             "created_at": t.created_at.isoformat(),
             "is_public": True,
-            "joined": t.slug in my_teams_slugs
+            "joined": is_joined,
+            "member_count": TeamMember.query.filter_by(team_slug=t.slug).count(),
+            "invite_code": t.invite_code if is_joined else None
         }
         
     # Add My Private Teams
@@ -890,7 +908,9 @@ def list_teams():
                     "slug": t.slug, "name": t.name, 
                     "created_at": t.created_at.isoformat(),
                     "is_public": t.is_public,
-                    "joined": True
+                    "joined": True,
+                    "member_count": TeamMember.query.filter_by(team_slug=t.slug).count(),
+                    "invite_code": t.invite_code
                 }
                 
     return jsonify(success=True, teams=list(combined_list.values()))
@@ -968,6 +988,11 @@ def leave_team():
         if not member:
             return jsonify(success=False, message="Membership not found"), 404
             
+        # Check Last Member
+        total_count = TeamMember.query.filter_by(team_slug=slug).count()
+        if total_count <= 1:
+            return jsonify(success=False, message="You are the last member. Please Disband team instead."), 400
+
         # Check Last Admin
         if member.role == 'ADMIN':
             admin_count = TeamMember.query.filter_by(team_slug=slug, role='ADMIN').count()
