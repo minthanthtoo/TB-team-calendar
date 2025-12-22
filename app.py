@@ -312,6 +312,8 @@ def get_all_data():
     
     # ... Security Checks ...
     query = Patient.query
+    pending_count = 0
+    
     if target_team and target_team != 'ALL' and target_team != 'DEFAULT':
         # SECURITY CHECK
         # Must be APPROVED member of this team
@@ -326,6 +328,10 @@ def get_all_data():
         
         if not membership:
              return jsonify(error="Unauthorized: Not an approved member"), 403
+
+        # Admin Stats for Notifications
+        if membership.role == 'ADMIN':
+            pending_count = TeamMember.query.filter_by(team_slug=target_team, status='PENDING').count()
 
         # Filter patients by team
         query = query.filter_by(team_id=target_team)
@@ -400,7 +406,7 @@ def get_all_data():
         for m in members
     ]
     
-    return jsonify(success=True, data=data, deleted=deleted_uids, teams=teams_data, members=members_data, timestamp=datetime.utcnow().isoformat())
+    return jsonify(success=True, data=data, deleted=deleted_uids, teams=teams_data, members=members_data, timestamp=datetime.utcnow().isoformat(), stats={"pending_requests": pending_count})
 
 # 2. Merge Data (Guest pulls from Host -> Appends/Replaces Local)
 @app.route("/api/merge_data", methods=["POST"])

@@ -353,6 +353,13 @@ document.addEventListener('DOMContentLoaded', function() {
           if(data.success) {
               // Update Sync Time
               if(data.timestamp) window.lastSyncTime = data.timestamp;
+
+              // Check Notifications
+              const badge = document.getElementById('teamRequestBadge');
+              if(badge) {
+                  const pending = (data.stats && data.stats.pending_requests) || 0;
+                  badge.style.display = pending > 0 ? 'block' : 'none';
+              }
               
               if(url.includes('&since=')) {
                   console.log("Partial Sync Received:", data.data.length, "updates", data.deleted.length, "deletions");
@@ -1591,8 +1598,11 @@ window.updateSidebarProgress = function() {
 }
 
 window.loadTeams = function() {
-    const list = document.getElementById('teamsList');
-    list.innerHTML = '<div style="text-align:center; padding:10px;"><span class="spinner"></span></div>';
+    const listMy = document.getElementById('myTeamsList');
+    const listPub = document.getElementById('publicTeamsList');
+    
+    if(listMy) listMy.innerHTML = '<div class="spinner"></div>';
+    if(listPub) listPub.innerHTML = '<div class="spinner"></div>';
     
     const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
     const currentSlug = localStorage.getItem('tb_team_slug'); // Check active team
@@ -1603,45 +1613,71 @@ window.loadTeams = function() {
     .then(res => res.json())
     .then(data => {
         if(!data.success) return;
-        if(data.teams.length === 0) {
-            list.innerHTML = '<div style="padding:10px; color:#94a3b8; text-align:center;">No teams found. Create one or Join by Code.</div>';
-            return;
+        
+        const myTeams = [];
+        const publicTeams = [];
+        
+        data.teams.forEach(t => {
+            if(t.joined) myTeams.push(t);
+            else publicTeams.push(t);
+        });
+        
+        // 1. Render My Teams (Switcher)
+        if(listMy) {
+            if(myTeams.length === 0) {
+                listMy.innerHTML = '<div style="color:#94a3b8; font-size:0.85rem; text-align:center; padding:10px; background:#f1f5f9; border-radius:6px;">You haven\'t joined any teams yet.</div>';
+            } else {
+                let html = '';
+                myTeams.forEach(t => {
+                    const isActive = t.slug === currentSlug;
+                    let btn = '';
+                    
+                    if (isActive) {
+                         btn = `<span style="font-size:0.75rem; font-weight:700; color:#166534; background:#dcfce7; padding:2px 8px; border-radius:12px;">ACTIVE</span>`;
+                    } else {
+                         if(t.status === 'APPROVED' || t.status === undefined) { 
+                             btn = `<button onclick="switchTeam('${t.slug}', '${t.name}')" style="background:#0f172a; color:white; border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
+                         } else {
+                             btn = `<span style="color:#c2410c; background:#fff7ed; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid #fdba74;">Pending</span>`;
+                         }
+                    }
+                    
+                    html += `
+                        <div style="background:white; border:1px solid ${isActive ? '#166534' : '#e2e8f0'}; padding:10px; border-radius:8px; display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <div style="font-weight:700; color:#334155; font-size:0.9rem;">${t.name}</div>
+                                <div style="font-size:0.7rem; color:#94a3b8;">${t.slug.toUpperCase()}</div>
+                            </div>
+                            <div>${btn}</div>
+                        </div>
+                    `;
+                });
+                listMy.innerHTML = html;
+            }
         }
         
-        let html = '';
-        data.teams.forEach(t => {
-            const isJoined = t.joined;
-            const isActive = t.slug === currentSlug;
-            
-            const badge = isJoined ? '<span style="background:#dcfce7; color:#166534; font-size:0.6rem; padding:2px 4px; border-radius:4px; margin-right:5px;">MEMBER</span>' : 
-                          (t.is_public ? '<span style="background:#e0f2fe; color:#0369a1; font-size:0.6rem; padding:2px 4px; border-radius:4px; margin-right:5px;">PUBLIC</span>' : '');
-            
-            let btn = '';
-            if (isActive) {
-                 btn = `<button style="background:#f1f5f9; color:#64748b; border:none; border-radius:4px; padding:4px 8px; font-size:0.75rem;" disabled>Active</button>`;
-            } else if (isJoined) {
-                 // Check Status
-                 if(t.status === 'APPROVED' || t.status === undefined) { 
-                     // Legacy or Approved
-                     btn = `<button onclick="switchTeam('${t.slug}', '${t.name}')" style="background:#fff; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
-                 } else {
-                     btn = `<button style="background:#fff7ed; color:#c2410c; border:1px solid #fdba74; border-radius:4px; padding:3px 8px; font-size:0.75rem;" disabled>Pending...</button>`;
-                 }
+        // 2. Render Public Directory
+        if(listPub) {
+            if(publicTeams.length === 0) {
+                listPub.innerHTML = '<div style="padding:10px; color:#94a3b8; text-align:center;">No other public teams found.</div>';
             } else {
-                 btn = `<button onclick="joinTeam('${t.slug}')" style="background:#0f172a; color:white; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:0.75rem;">Join</button>`;
+                let html = '';
+                publicTeams.forEach(t => {
+                    html += `
+                      <div class="team-list-item" style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid #f1f5f9;">
+                          <div>
+                              <div style="font-weight:600; color:#334155;">${t.name}</div>
+                              <div style="font-size:0.75rem; color:#94a3b8;">${t.is_public ? 'Public Team' : 'Private'}</div>
+                          </div>
+                          <div>
+                              <button onclick="joinTeam('${t.slug}')" style="background:white; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:0.75rem;">Join</button>
+                          </div>
+                      </div>
+                    `;
+                });
+                listPub.innerHTML = html;
             }
-                
-            html += `
-              <div class="team-list-item" style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid #f1f5f9;">
-                  <div>
-                      <div style="font-weight:600; color:#334155;">${badge}${t.name}</div>
-                      <div style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">${t.slug}</div>
-                  </div>
-                  <div>${btn}</div>
-              </div>
-            `;
-        });
-        list.innerHTML = html;
+        }
     });
 }
 
