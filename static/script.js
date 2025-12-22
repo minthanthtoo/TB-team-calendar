@@ -1,7 +1,8 @@
 document.addEventListener('DOMContentLoaded', function() {
   
   // -- Toast Notification System --
-  function showToast(message, type = 'success') {
+  // -- Toast Notification System --
+  window.showToast = function(message, type = 'success') {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
