@@ -294,23 +294,19 @@
           >
             Patient Registry
           </h4>
-          <div style="margin-bottom: 1rem; position: relative">
             <input
               type="text"
-              id="newTeamName"
-              placeholder="e.g. Mandalay North"
-              style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;"
+              id="registrySearch"
+              placeholder="Search patients..."
+              style="
+                width: 100%;
+                padding: 8px 12px;
+                padding-left: 35px;
+                border-radius: 20px;
+                border: 1px solid #e2e8f0;
+                font-size: 0.9rem;
+              "
             />
-            <div style="margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
-                <input type="checkbox" id="newTeamPublic" style="width:auto;">
-                <label for="newTeamPublic" style="font-size:0.9rem; color:#475569;">Public Team (Visible to everyone)</label>
-            </div>
-            <button
-              id="createTeamBtn"
-              style="width: 100%; padding: 10px; background: #0f172a; color: white; border: none; border-radius: 6px; font-weight: 600;"
-            >
-              Create Team
-            </button>
             <span
               style="
                 position: absolute;
@@ -518,14 +514,19 @@
           </div>
           
           <div class="form-section-title">🚀 Create New Team</div>
-          <div style="display: flex; gap: 8px">
+          <div>
             <input
               type="text"
               id="newTeamName"
               placeholder="e.g. Mandalay North"
               class="form-control"
+              style="margin-bottom: 8px;"
             />
-            <button class="btn" id="createTeamBtn">Create</button>
+            <div style="margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
+                <input type="checkbox" id="newTeamPublic" style="width:auto;">
+                <label for="newTeamPublic" style="font-size:0.9rem; color:#475569; font-weight:normal;">Public Team (Visible to everyone)</label>
+            </div>
+            <button class="btn" id="createTeamBtn" style="width: 100%;">Create Team</button>
           </div>
 
           <div class="form-section-title" style="margin-top: 20px;">🌐 Browse Teams</div>
