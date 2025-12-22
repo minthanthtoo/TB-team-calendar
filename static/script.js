@@ -56,6 +56,87 @@ document.addEventListener('DOMContentLoaded', function() {
     height: 'auto', // Adjust height automatically
     themeSystem: 'standard', // we use our own CSS overrides
     events: '/events',
+    dayCellDidMount: function(info) {
+        // Highlight Sabbath Days
+        const d = info.date;
+        const jdn = ceDateTime.w2j(d.getFullYear(), d.getMonth() + 1, d.getDate());
+        const isSabbath = ceMmDateTime.cal_sabbath(ceMmDateTime.j2m(jdn).md, ceMmDateTime.j2m(jdn).mm, ceMmDateTime.j2m(jdn).myt);
+        if(isSabbath === 1) {
+            info.el.classList.add('fc-day-sabbath');
+        }
+    },
+    eventSources: [
+      {
+        id: 'myanmarHolidaySource',
+        events: function(fetchInfo, successCallback, failureCallback) {
+          try {
+            const holidays = [];
+            const showDetails = document.getElementById('toggleMyanmarDetails')?.checked;
+            let start = new Date(fetchInfo.start);
+            let end = new Date(fetchInfo.end);
+            let curr = new Date(start);
+            
+            while (curr < end) {
+              const y = curr.getFullYear(), m = curr.getMonth() + 1, d = curr.getDate();
+              const jdn = ceDateTime.w2j(y, m, d);
+              const mDate = ceMmDateTime.j2m(jdn); // {myt, my, mm, md}
+              
+              // 1. Public Holidays (Always show if possible, or bundle with toggle)
+              const hList = ceMmDateTime.cal_holiday(jdn);
+              if (hList && hList.length > 0) {
+                hList.forEach(hName => {
+                  holidays.push({
+                    title: `🇲🇲 ${hName}`,
+                    start: curr.toISOString().split('T')[0],
+                    allDay: true,
+                    className: 'holiday-event',
+                    color: '#fef9c3',
+                    textColor: '#854d0e'
+                  });
+                });
+              }
+
+              // 2. Myanmar Lunar Details (If Toggled)
+              if (showDetails) {
+                const mp = ceMmDateTime.cal_mp(mDate.md, mDate.mm, mDate.myt); // 0=wax, 1=full, 2=wan, 3=new
+                const mf = ceMmDateTime.cal_mf(mDate.md);
+                const isSabbath = ceMmDateTime.cal_sabbath(mDate.md, mDate.mm, mDate.myt); // 1=sab, 2=eve
+
+                let lunarTitle = "";
+                let lunarClass = "lunar-detail";
+                let lunarColor = "transparent";
+
+                if (mp === 1) lunarTitle = "🌕 Full Moon";
+                else if (mp === 3) lunarTitle = "🌑 New Moon";
+                else {
+                    const phase = (mp === 0) ? "လဆန်း" : "လဆုတ်";
+                    lunarTitle = `${phase} ${mf} ရက်`;
+                }
+
+                if (isSabbath === 1) lunarTitle += " (ဥပုသ်နေ့)";
+                
+                holidays.push({
+                  title: lunarTitle,
+                  start: curr.toISOString().split('T')[0],
+                  allDay: true,
+                  className: lunarClass,
+                  display: 'list-item',
+                  textColor: '#64748b',
+                  backgroundColor: 'transparent',
+                  borderColor: 'transparent'
+                });
+              }
+
+              curr.setDate(curr.getDate() + 1);
+            }
+            successCallback(holidays);
+          } catch (e) {
+            console.error("Holiday calculation error:", e);
+            successCallback([]);
+          }
+        }
+      }
+    ],
     windowResize: function(view) {
       if (window.innerWidth < 768) {
         calendar.changeView('listMonth');
@@ -65,94 +146,114 @@ document.addEventListener('DOMContentLoaded', function() {
     },
     eventClick: function(info) {
       const p = info.event.extendedProps.patient;
-      const color = info.event.backgroundColor || 'var(--primary)';
+      // Map FullCalendar event to our internal structure
+      const eventData = {
+          id: info.event.id,
+          title: info.event.title,
+          startStr: info.event.startStr,
+          backgroundColor: info.event.backgroundColor || 'var(--primary)',
+          extendedProps: info.event.extendedProps
+      };
+      
+      window.openEventEditor(eventData, p);
+    }
+  });
+
+  calendar.render();
+  window.calendar = calendar;
+
+  // -- Event Editor Modal Logic --
+  window.openEventEditor = function(eventData, patient) {
       const modal = document.getElementById('eventModal');
       const modalTitle = document.getElementById('modalTitle');
       const modalDetails = document.getElementById('modalDetails');
       const modalHeader = modal.querySelector('.modal-header');
 
-      modalTitle.innerText = `${p.name} - ${info.event.title}`;
-      modalHeader.style.backgroundColor = color; // Header matches event color
+      modalTitle.innerText = `${patient.name} - ${eventData.title}`;
+      modalHeader.style.backgroundColor = eventData.backgroundColor;
 
-      const isMEnd = info.event.title.includes("M-end");
+      const isMEnd = eventData.title.includes("M-end");
       
       // Outcome Options
       const outcomes = isMEnd 
         ? ["", "Cured", "Completed", "Failed", "LTFU", "Died"] 
         : ["", "Failed", "LTFU", "Died"];
-        
-      let outcomeOptions = outcomes.map(opt => {
-         const label = opt === "" ? "Ongoing" : opt;
-         const selected = info.event.extendedProps.outcome === opt ? 'selected' : '';
-         return `<option value="${opt}" ${selected}>${label}</option>`;
-      }).join('');
+      
+      const outcomeLabels = {
+          "": "Ongoing / Pending",
+          "Cured": "✅ Cured",
+          "Completed": "🏁 Completed",
+          "Failed": "❌ Failed",
+          "LTFU": "⚠️ LTFU",
+          "Died": "💀 Died"
+      };
 
-      const originalDate = new Date(info.event.startStr);
+      let outcomeGridHtml = '<div class="outcome-grid">';
+      outcomes.forEach(opt => {
+          const selected = eventData.extendedProps.outcome === opt ? 'selected' : '';
+          const label = outcomeLabels[opt] || opt;
+          outcomeGridHtml += `<div class="outcome-option ${selected}" data-value="${opt}" onclick="selectOutcome(this)">${label}</div>`;
+      });
+      outcomeGridHtml += '</div><input type="hidden" id="modalOutcome" value="' + (eventData.extendedProps.outcome || "") + '">';
+
+      const originalDate = new Date(eventData.startStr);
 
       modalDetails.innerHTML = `
-        <div style="background: #f8fafc; padding: 1rem; border-bottom: 1px solid #e2e8f0; margin: -1.5rem -1.5rem 1.5rem -1.5rem;">
-           <div class="detail-row" style="margin:0; border:none; padding:0;">
-             <div style="flex:1">
-               <div style="font-size:0.75rem; text-transform:uppercase; color:#64748b; font-weight:700;">Patient</div>
-               <div style="font-size:1.1rem; font-weight:600; color:#0f172a;">${p.name}</div>
-             </div>
-             <div style="text-align:right">
-               <div style="font-size:0.75rem; text-transform:uppercase; color:#64748b; font-weight:700;">Regime</div>
-               <div style="font-size:1.1rem; font-weight:600; color:#0f172a;">${p.regime}</div>
-             </div>
+        <div style="background: linear-gradient(to right, #f8fafc, #fff); padding: 1rem; border-left: 4px solid ${eventData.backgroundColor}; border-radius: 8px; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+               <div style="font-size:1.1rem; font-weight:700; color:#334155;">${patient.name}</div>
+               <div style="font-size:0.8rem; background:#f1f5f9; padding:2px 8px; border-radius:12px; color:#64748b;">${patient.regime}</div>
            </div>
-           <div style="margin-top:0.5rem; font-size:0.85rem; color:#475569;">
-             ${p.age} years • ${p.sex} • ${p.address || 'No Address'}
+           <div style="font-size:0.85rem; color:#64748b;">
+             ID: <span style="font-family:monospace;">${patient.uid ? patient.uid.slice(0,4) : 'N/A'}</span> • ${patient.age}y/${patient.sex}
            </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
-            <div class="form-group">
-               <label>Expected Date</label>
-               <div style="font-size:1.1rem; font-weight:600; color:#0f172a;">${info.event.startStr}</div>
-            </div>
-            <div class="form-group">
-               <label>Calculated Date</label>
-               <div id="modalDate" style="font-size:1.1rem; font-weight:600; color:${color};">${info.event.startStr}</div>
-            </div>
+        <div class="form-section-title">📅 Schedule Management</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+             <div>
+                <label>Planned Date</label>
+                <div style="padding:0.75rem; background:#f8fafc; border-radius:8px; color:#64748b; font-weight:500;">${eventData.startStr}</div>
+             </div>
+             <div>
+                <label>Adjusted Date</label>
+                <div id="modalDate" style="padding:0.75rem; background:#fff; border:2px solid ${eventData.backgroundColor}; border-radius:8px; color:${eventData.backgroundColor}; font-weight:700;">${eventData.startStr}</div>
+             </div>
         </div>
 
         <div class="form-group" style="margin-bottom: 1.5rem;">
-           <label>Missed Treatment Days (Ripple Effect)</label>
-           <div style="display:flex; align-items:center;">
-             <input type="number" id="modalMissedDays" value="${info.event.extendedProps.missed_days || 0}" style="font-size:1.2rem; font-weight:600; width:100px; margin-right:1rem;">
-             <span style="font-size:0.85rem; color:#64748b;">days delayed</span>
+           <label>Treatment Delay (Days)</label>
+           <div style="display:flex; align-items:center; gap:10px;">
+             <button class="btn btn-secondary" onclick="adjustMissed(-1)" style="width:40px; height:40px; font-weight:bold;">-</button>
+             <input type="number" id="modalMissedDays" value="${eventData.extendedProps.missed_days || 0}" style="text-align:center; font-size:1.1rem; font-weight:bold; width:80px; height:40px;" readonly>
+             <button class="btn btn-secondary" onclick="adjustMissed(1)" style="width:40px; height:40px; font-weight:bold;">+</button>
+             <span style="font-size:0.8rem; color:#64748b; margin-left:5px;">days spilled over</span>
            </div>
-           <div style="font-size:0.8rem; color:#ef4444; margin-top:0.25rem;">⚠ Changing this will shift all future events.</div>
+           <p style="font-size:0.75rem; color:#ef4444; margin-top:5px;">⚠ Affects all future dates.</p>
         </div>
 
-        <div class="form-group" style="margin-bottom: 1.5rem;">
-           <label>Milestone Outcome</label>
-           <select id="modalOutcome" style="padding:0.75rem; font-size:1rem;">${outcomeOptions}</select>
-        </div>
-
-        <div class="form-group">
-           <label>Medical Notes</label>
-           <textarea id="modalRemark" rows="3" style="width: 100%; resize: vertical; padding:0.75rem; font-size:0.95rem; border-color:#cbd5e1;" placeholder="Add clinical observations...">${info.event.extendedProps.remark || ''}</textarea>
-        </div>
+        <div class="form-section-title">🩺 Clinical Outcome</div>
+        ${outcomeGridHtml}
+        
+        <div class="form-section-title" style="margin-top:1.5rem;">📝 Notes</div>
+        <textarea id="modalRemark" rows="3" class="input-highlight" placeholder="Record clinical observations, complications, or patient feedback...">${eventData.extendedProps.remark || ''}</textarea>
 
         <div style="margin-top: 2rem; display: flex; justify-content: flex-end; gap: 1rem;">
            <button id="closeModalBtnSecondary" class="btn btn-secondary" style="border:none;">Cancel</button>
-           <button id="saveEventBtn" class="btn" style="min-width: 120px; background-color: ${color}">Save Record</button>
+           <button id="saveEventBtn" class="btn" style="min-width: 140px; background-color: ${eventData.backgroundColor}; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">💾 Save Record</button>
         </div>
       `;
 
       // Show Modal
-      modal.style.display = 'block';
+      modal.style.display = 'flex';
 
-      // Logic for Modal Interactions
+      // Wiring
       const missedInput = document.getElementById('modalMissedDays');
       const dateSpan = document.getElementById('modalDate');
       const closeSecBtn = document.getElementById('closeModalBtnSecondary');
       
       if(closeSecBtn) closeSecBtn.onclick = () => { modal.style.display = 'none'; };
 
-      // Update date dynamically
       missedInput.addEventListener('input', function() {
         const newMissed = parseInt(this.value || 0);
         const shiftedDate = new Date(originalDate);
@@ -174,7 +275,7 @@ document.addEventListener('DOMContentLoaded', function() {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
-            id: info.event.id,
+            id: eventData.id,
             missed_days: missedDays,
             remark: remark,
             outcome: outcome
@@ -186,6 +287,18 @@ document.addEventListener('DOMContentLoaded', function() {
             showToast('Event updated successfully!', 'success');
             modal.style.display = 'none';
             calendar.refetchEvents(); 
+            
+            // Checks if Patient Detail Modal is open, if so, refresh it
+            const detailModal = document.getElementById('patientDetailModal');
+            if(detailModal && detailModal.style.display !== 'none' && patient.uid) {
+                 // Re-fetch all data to get latest state, then update detail view
+                 // Optimization: openPatientDetail(uid) triggers fetch in current implementation?
+                 // Current openPatientDetail uses window.allPatientData. We need to refresh window.allPatientData first.
+                 // So we should call a data refresh then re-open.
+                 refreshPatientDataAndUI(patient.uid);
+            }
+            if(window.updateRegistryStatus) window.updateRegistryStatus();
+
           } else {
             showToast('Failed to update event: ' + data.message, 'error');
             btn.disabled = false;
@@ -198,10 +311,20 @@ document.addEventListener('DOMContentLoaded', function() {
           btn.disabled = false;
         });
       }
-    }
-  });
+  }
 
-  calendar.render();
+  // Helper to refresh data and then update detail view
+  window.refreshPatientDataAndUI = function(targetUid) {
+      fetch('/api/get_all_data')
+      .then(res => res.json())
+      .then(data => {
+          if(data.success) {
+              window.allPatientData = data.data;
+              if(targetUid) window.openPatientDetail(targetUid);
+              window.renderPatientList(); // Refresh list/badges too
+          }
+      });
+  }
 
   // -- Modal Close Logic --
   const modal = document.getElementById('eventModal');
@@ -849,7 +972,7 @@ window.allPatientData = [];
 
 window.openPatientList = function(initialFilter = 'all') {
     const modal = document.getElementById('patientListModal');
-    modal.style.display = 'block';
+    modal.style.display = 'flex';
     
     // Set filter if provided, otherwise default to all
     const filterSelect = document.getElementById('patientFilter');
@@ -1013,7 +1136,11 @@ window.openPatientDetail = function(uid) {
             <div style="position:relative; margin-bottom:20px;">
                 <div style="position:absolute; left:-25px; top:0; width:10px; height:10px; background:${color}; border-radius:50%; border:2px solid white;"></div>
                 <div style="font-size:0.8rem; font-weight:700; color:#64748b;">${date}</div>
-                <div style="background:white; border:1px solid #f1f5f9; padding:8px; border-radius:6px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+                <div onclick="editTimelineEvent('${p.uid}', '${e.id}')" 
+                     style="background:white; border:1px solid #f1f5f9; padding:8px; border-radius:6px; box-shadow:0 1px 2px rgba(0,0,0,0.05); cursor:pointer; transition:transform 0.1s, box-shadow 0.1s;"
+                     onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 6px -1px rgba(0,0,0,0.1)';"
+                     onmouseout="this.style.transform='none'; this.style.boxShadow='0 1px 2px rgba(0,0,0,0.05)';"
+                     title="Click to Edit Record">
                     <div style="font-weight:600; color:#334155;">${e.title} ${outcome}</div>
                     <div style="font-size:0.85rem; color:#64748b;">${e.remark || ''}</div>
                 </div>
@@ -1024,7 +1151,7 @@ window.openPatientDetail = function(uid) {
     }
     
     timeline.innerHTML = tlHtml;
-    modal.style.display = 'block';
+    modal.style.display = 'flex';
 }
 
 // Wire up events for the new modals
@@ -1066,6 +1193,38 @@ document.addEventListener('DOMContentLoaded', () => {
     if(monthFilter) monthFilter.addEventListener('change', () => window.renderPatientList());
     if(sort) sort.addEventListener('change', () => window.renderPatientList());
     
+    // Myanmar Toggle
+    const mToggle = document.getElementById('toggleMyanmarDetails');
+    if(mToggle) {
+        mToggle.addEventListener('change', () => {
+            if(window.calendar) {
+                // Force immediate refetch
+                window.calendar.refetchEvents();
+            }
+        });
+    }
+
+    // Sidebar Search
+    const regSearch = document.getElementById('registrySearch');
+    if(regSearch) {
+        regSearch.addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase();
+            const items = document.querySelectorAll('#registryList .patient-item');
+            items.forEach(item => {
+                const name = item.getAttribute('data-name');
+                const uid = item.getAttribute('data-uid');
+                if(name.includes(term) || (uid && uid.toLowerCase().includes(term))) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        });
+    }
+
+    // Initial Patient Status/Progress Update
+    updateRegistryStatus();
+    
     // Close on outside click
     window.addEventListener('click', (e) => {
         const m1 = document.getElementById('patientListModal');
@@ -1077,3 +1236,139 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial Dashboard Update
     window.updateDashboardCounts();
 });
+window.updateRegistryStatus = async function() {
+    try {
+        const response = await fetch('/api/get_all_data');
+        const rData = await response.json();
+        const patients = rData.data || [];
+        
+        patients.forEach(p => {
+            const statusEl = document.getElementById(`status-${p.uid}`);
+            const progressEl = document.getElementById(`progress-${p.uid}`);
+            const progressText = document.getElementById(`progress-text-${p.uid}`);
+            
+            if(!statusEl) return;
+
+            // 1. Calculate Status
+            const events = p.events || [];
+            // Sort events by date
+            const sorted = [...events].sort((a,b) => new Date(a.start) - new Date(b.start));
+            const last = sorted.length > 0 ? sorted[sorted.length - 1] : null;
+            
+            let status = 'Active';
+            let badgeClass = 'badge-active';
+            
+            if(last && (last.outcome === 'Cured' || last.outcome === 'Completed')) {
+                status = 'Completed';
+                badgeClass = 'badge-completed';
+            }
+            
+            statusEl.innerHTML = `<span class="badge ${badgeClass}">${status}</span>`;
+            
+            // 2. Calculate Progress
+            // Assuming treatment is roughly 180 days (6 months) or check first event
+            if(sorted.length > 0) {
+                const start = new Date(sorted[0].start);
+                const now = new Date();
+                const totalDays = 180; // Default treatment span
+                const elapsed = Math.max(0, (now - start) / (1000 * 60 * 60 * 24));
+                const percent = Math.min(100, Math.round((elapsed / totalDays) * 100));
+                
+                if(progressEl) progressEl.style.width = `${percent}%`;
+                if(progressText) progressText.innerText = `${percent}% Treated (${Math.round(elapsed)}d / ${totalDays}d)`;
+            } else {
+                if(progressEl) progressEl.style.width = '0%';
+                if(progressText) progressText.innerText = 'No events recorded';
+            }
+        });
+    } catch (e) {
+        console.error("Failed to update registry status:", e);
+    }
+}
+
+// -- Helper for Timeline Interactions --
+window.editTimelineEvent = function(uid, eventId) {
+    const p = window.allPatientData.find(x => x.uid === uid);
+    if(!p) return;
+    
+    // Find event roughly
+    const evt = p.events.find(e => e.id == eventId);
+    if(!evt) return;
+
+    // Convert to structure expected by openEventEditor
+    const eventData = {
+        id: evt.id,
+        title: evt.title,
+        startStr: evt.start, 
+        backgroundColor: evt.color || 'var(--primary)',
+        extendedProps: {
+            outcome: evt.outcome,
+            remark: evt.remark,
+            missed_days: evt.missed_days,
+            patient: p // Included just in case, though passed separately
+        }
+    };
+    
+    window.openEventEditor(eventData, p);
+}
+
+// -- Helper for Timeline Interactions --
+window.editTimelineEvent = function(uid, eventId) {
+    // 1. Find patient
+    const p = window.allPatientData.find(x => x.uid === uid);
+    if(!p) {
+        console.error("Patient not found for uid:", uid);
+        return;
+    }
+    
+    // 2. Find event
+    // Note: eventId might be string or int, so use ==
+    const evt = p.events.find(e => e.id == eventId);
+    if(!evt) {
+        console.error("Event not found:", eventId);
+        return;
+    }
+
+    // 3. Construct eventData matching FullCalendar structure
+    const eventData = {
+        id: evt.id,
+        title: evt.title,
+        startStr: evt.start, 
+        backgroundColor: evt.color || 'var(--primary)',
+        extendedProps: {
+            outcome: evt.outcome,
+            remark: evt.remark,
+            missed_days: evt.missed_days,
+            patient: p // Included just in case
+        }
+    };
+    
+    // 4. Open Editor
+    if(window.openEventEditor) {
+        window.openEventEditor(eventData, p);
+    } else {
+        console.error("openEventEditor not defined");
+    }
+}
+
+// --- UI Helpers for Event Form ---
+window.selectOutcome = function(el) {
+    // 1. Update Hidden Input
+    const val = el.getAttribute('data-value');
+    document.getElementById('modalOutcome').value = val;
+    
+    // 2. Visual Selection
+    document.querySelectorAll('.outcome-option').forEach(opt => opt.classList.remove('selected'));
+    el.classList.add('selected');
+}
+
+window.adjustMissed = function(delta) {
+    const input = document.getElementById('modalMissedDays');
+    let val = parseInt(input.value || 0);
+    val += delta;
+    if(val < 0) val = 0; // Negative delay allowed? Usually not.
+    input.value = val;
+    
+    // Trigger input event to update date preview
+    input.dispatchEvent(new Event('input'));
+}

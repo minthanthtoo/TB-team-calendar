@@ -294,6 +294,7 @@ def get_all_data():
         }
         for e in p.events:
             p_data["events"].append({
+                "id": e.id,
                 "title": e.title, "start": e.start, "original_start": e.original_start,
                 "color": e.color, "missed_days": e.missed_days, 
                 "remark": e.remark, "outcome": e.outcome

@@ -427,19 +427,190 @@ input:focus, select:focus, textarea:focus {
 .tab-content { animation: fadeIn 0.2s; }
 
 
-/* Close Button */
-.close-modal {
-    background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-muted);
+/* Holiday Events */
+.fc-event.holiday-event {
+  border: none;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 1px 4px;
+  cursor: default;
 }
-.close-modal:hover { color: var(--danger); }
 
-#hostTab {
-    max-height: 70vh;
-    overflow-y: auto;
+.fc-v-event.holiday-event {
+  background-color: #fef9c3 !important;
+  border-left: 3px solid #facc15 !important;
 }
+
+.fc-day-grid-event.holiday-event {
+  background-color: #fef9c3 !important;
+}
+
+/* Lunar Details */
+.fc-event.lunar-detail {
+  border: none !important;
+  background: transparent !important;
+  font-size: 0.7rem;
+  padding: 0 4px;
+  cursor: default;
+  box-shadow: none !important;
+}
+/* --- Premium UI Enhancements --- */
+
+/* Dashboard & Stats */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: white;
+    padding: 1.25rem 1.5rem;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    border-left: 4px solid #e2e8f0;
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+
+.stat-total { border-left-color: #3b82f6; background: linear-gradient(to bottom right, #ffffff, #f0f7ff); color: #3b82f6; }
+.stat-active { border-left-color: #f59e0b; background: linear-gradient(to bottom right, #ffffff, #fffbeb); color: #f59e0b; }
+.stat-cured { border-left-color: #10b981; background: linear-gradient(to bottom right, #ffffff, #f0fdf4); color: #10b981; }
+
+.stat-icon {
+    width: 48px; height: 48px; background: rgba(255,255,255,0.8); border-radius: 12px;
+    display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;
+}
+
+.stat-label { font-size: 0.85rem; font-weight: 600; color: #64748b; margin-bottom: 2px; }
+.stat-value { font-size: 1.75rem; font-weight: 800; color: #1e293b; line-height: 1.1; }
+
+/* Registry Items */
+#registryList { list-style: none; padding: 0; margin: 0; }
+.patient-item {
+    background: white; border: 1px solid #f1f5f9; padding: 1.25rem; margin-bottom: 1rem;
+    border-radius: 12px; border-left: 4px solid #e2e8f0; transition: all 0.2s;
+}
+.patient-name-link { font-size: 1rem; font-weight: 700; color: #1e293b; cursor: pointer; text-decoration: none; display: flex; align-items: center; gap: 5px; }
+.patient-name-link:hover { color: #0ea5e9; }
+.info-icon { font-size: 0.8rem; color: #0ea5e9; opacity: 0.7; }
+.patient-meta { font-size: 0.8rem; color: #64748b; margin-top: 2px; }
+
+/* Badges & Progress */
+.badge { padding: 4px 10px; border-radius: 20px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.025em; }
+.badge-active { background: #fee2e2; color: #ef4444; }
+.badge-completed { background: #dcfce7; color: #166534; }
+.badge-loading { background: #f1f5f9; color: #94a3b8; }
+
+.progress-bar-bg { height: 8px; background: #f1f5f9; border-radius: 4px; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: #0ea5e9; transition: width 0.6s ease; }
+.progress-label { font-size: 0.7rem; color: #94a3b8; margin-top: 5px; text-align: right; font-weight: 600; }
+
+.btn-text-danger { background: none; border: none; color: #94a3b8; font-size: 0.75rem; cursor: pointer; padding: 5px 0; }
+.btn-text-danger:hover { color: #ef4444; }
+
+/* Calendar Highlighting */
+.fc-day-sabbath { background-color: rgba(14, 165, 233, 0.04) !important; }
+.fc-day-today { background-color: rgba(14, 165, 233, 0.08) !important; }
 
 .sync-check {
     transform: scale(0.85); /* Smaller checkbox */
     cursor: pointer;
 }
 
+
+/* --- Premium Form Enhancements --- */
+.form-section-title {
+    font-size: 0.8rem;
+    color: var(--primary);
+    background: var(--bg-surface);
+    padding: 0.25rem 0.5rem;
+    margin-bottom: 1rem;
+    margin-top: 0.5rem;
+    border-radius: 4px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-left: 3px solid var(--primary);
+}
+
+.input-highlight {
+    border: 2px solid var(--border-color);
+    padding: 0.75rem;
+    font-size: 1rem;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+.input-highlight:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px rgba(2, 132, 199, 0.1);
+}
+
+/* Outcome Selection Visuals */
+.outcome-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-top: 0.5rem;
+}
+
+.outcome-option {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: all 0.2s;
+    text-align: center;
+    font-size: 0.9rem;
+}
+
+.outcome-option:hover {
+    background: #f8fafc;
+    border-color: var(--text-muted);
+}
+
+.outcome-option.selected {
+    border-color: transparent;
+    color: white;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+/* Status Colors */
+.outcome-option[data-value="Cured"].selected,
+.outcome-option[data-value="Completed"].selected {
+    background: #10b981; /* Green */
+}
+.outcome-option[data-value="Failed"].selected,
+.outcome-option[data-value="Died"].selected {
+    background: #ef4444; /* Red */
+}
+.outcome-option[data-value="LTFU"].selected {
+    background: #f59e0b; /* Amber */
+}
+.outcome-option[data-value=""].selected {
+    background: #3b82f6; /* Blue (Ongoing) */
+}
+
+/* Modal tweaks */
+.modal-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.modal-body-scroll {
+    padding: 1.5rem;
+    overflow-y: auto;
+    max-height: 70vh;
+}

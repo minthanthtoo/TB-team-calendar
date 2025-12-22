@@ -1,343 +1,831 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TB Team Cycle Tracker</title>
-  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-  <meta name="theme-color" content="#0ea5e9">
-  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3063/3063176.png">
-</head>
-<body>
-
-  <header>
-    <h1>
-      <span style="font-size: 1.5rem; margin-right: 0.5rem;">🏥</span> 
-      TB Team Cycle Tracker
-    </h1>
-    <div style="display: flex; flex-direction: column; align-items: flex-end;">
-      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TB Team Cycle Tracker</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="manifest"
+      href="{{ url_for('static', filename='manifest.json') }}"
+    />
+    <meta name="theme-color" content="#0ea5e9" />
+    <link
+      rel="apple-touch-icon"
+      href="https://cdn-icons-png.flaticon.com/512/3063/3063176.png"
+    />
+  </head>
+  <body>
+    <header>
+      <h1>
+        <span style="font-size: 1.5rem; margin-right: 0.5rem">🏥</span>
+        TB Team Cycle Tracker
+      </h1>
+      <div style="display: flex; flex-direction: column; align-items: flex-end">
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+          "
+        >
           <!-- Sync Button -->
-          <button id="wifiSyncBtn" style="border: none; background: #f1f5f9; color: var(--text-main); font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
-             📡 WiFi Sync
+          <button
+            id="wifiSyncBtn"
+            style="
+              border: none;
+              background: #f1f5f9;
+              color: var(--text-main);
+              font-size: 0.75rem;
+              font-weight: 600;
+              padding: 2px 8px;
+              border-radius: 12px;
+              cursor: pointer;
+              display: flex;
+              align-items: center;
+              gap: 4px;
+            "
+          >
+            📡 WiFi Sync
           </button>
           <!-- Network Status -->
-          <div id="networkStatus" style="font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; background: #e0f2fe; color: #0284c7; display: inline-flex; align-items: center; gap: 4px;">
-            <span style="width: 8px; height: 8px; background: #0284c7; border-radius: 50%;"></span> Online
-          </div>
-      </div>
-      <div style="font-size: 0.85rem; color: #475569; font-weight: 500;">
-        <span id="headerCount">{{ patients|length }}</span> PatientRecords
-      </div>
-    </div>
-  </header>
-
-  <div class="container">
-    
-    <!-- Dashboard Summary -->
-    <div class="dashboard-grid">
-      <div class="stat-card" id="totalPatientsCard" onclick="openPatientList()" style="cursor: pointer; transition: transform 0.1s;">
-        <div class="stat-label">Total Patients</div>
-        <div class="stat-value" id="totalCount">{{ patients|length }}</div>
-      </div>
-      <div class="stat-card" id="activeCard" onclick="openPatientList('active')" style="cursor: pointer; transition: transform 0.1s;">
-        <div class="stat-label">Active Treatment</div>
-        <div class="stat-value" id="activeCount">
-          {% set active_count = 0 %}
-          {% for p in patients %}
-             {% set active_count = active_count + 1 %} 
-          {% endfor %}
-          {{ active_count }}
-        </div>
-      </div>
-      <div class="stat-card" id="outcomesCard" onclick="openPatientList('completed')" style="border-left-color: var(--success); cursor: pointer; transition: transform 0.1s;">
-        <div class="stat-label">Outcomes (Cured)</div>
-        <div class="stat-value" id="curedCount">0</div>
-      </div>
-    </div>
-
-    <!-- Collapsible Patient Form -->
-    <div class="card" style="padding: 0; overflow: hidden; border: none; background: transparent; box-shadow: none;">
-      <button id="toggleFormBtn" class="btn toggle-btn">
-        <span><span style="margin-right:8px;">+</span> Add New Patient</span>
-        <span class="icon-toggle">▼</span>
-      </button>
-
-      <form id="patientForm" method="POST" action="/add_patient" class="card" style="margin-top: 10px;">
-        <h3 style="color: var(--primary);">New Patient Enrollment</h3>
-        
-        <div class="form-grid">
-          <div class="form-group">
-            <label for="name">Full Name</label>
-            <input type="text" id="name" name="name" placeholder="e.g. U Ba" required>
-          </div>
-          <div class="form-group">
-            <label for="age">Age</label>
-            <input type="number" id="age" name="age" placeholder="45" required>
-          </div>
-          <div class="form-group">
-            <label for="sex">Sex</label>
-            <select id="sex" name="sex">
-              <option>Male</option>
-              <option>Female</option>
-            </select>
+          <div
+            id="networkStatus"
+            style="
+              font-size: 0.75rem;
+              font-weight: 600;
+              padding: 2px 8px;
+              border-radius: 12px;
+              background: #e0f2fe;
+              color: #0284c7;
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+            "
+          >
+            <span
+              style="
+                width: 8px;
+                height: 8px;
+                background: #0284c7;
+                border-radius: 50%;
+              "
+            ></span>
+            Online
           </div>
         </div>
+        <div style="font-size: 0.85rem; color: #475569; font-weight: 500">
+          <span id="headerCount">{{ patients|length }}</span> PatientRecords
+        </div>
+      </div>
+    </header>
 
-        <div class="form-grid">
-          <div class="form-group">
-            <label for="address">Address / Contact</label>
-            <input type="text" id="address" name="address" placeholder="Village / Phone">
-          </div>
-          <div class="form-group">
-            <label for="regime">Treatment Regime</label>
-            <select id="regime" name="regime">
-              <option value="IR">IR (Intensive Phase)</option>
-              <option value="CR">CR (Continuation Phase)</option>
-              <option value="RR">RR (Retreatment)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Cycle Timeline</label>
-            <div id="milestonesPreview" style="padding: 0.6rem; background: #f1f5f9; color: #475569; border-radius: 6px; font-size: 0.85rem;">Loading...</div>
+    <div class="container">
+      <!-- Dashboard Summary -->
+      <div class="dashboard-grid">
+        <div
+          class="stat-card stat-total"
+          id="totalPatientsCard"
+          onclick="openPatientList('all')"
+        >
+          <div class="stat-icon">👥</div>
+          <div class="stat-content">
+            <div class="stat-label">Total Patients</div>
+            <div class="stat-value" id="totalCount">{{ patients|length }}</div>
           </div>
         </div>
-
-        <div class="form-grid">
-          <div class="form-group">
-            <label for="start_date">Provisional Start Date</label>
-            <input type="date" id="start_date" name="start_date" required>
-          </div>
-          <div class="form-group" style="flex: 2;">
-            <label for="remark">Clinical Notes</label>
-            <input type="text" id="remark" name="remark" placeholder="History, comorbidities...">
+        <div
+          class="stat-card stat-active"
+          id="activeCard"
+          onclick="openPatientList('active')"
+        >
+          <div class="stat-icon">💊</div>
+          <div class="stat-content">
+            <div class="stat-label">Active Treatment</div>
+            <div class="stat-value" id="activeCount">
+              {% set active_count = 0 %} {% for p in patients %} {% set
+              active_count = active_count + 1 %} {% endfor %} {{ active_count }}
+            </div>
           </div>
         </div>
-
-        <div style="text-align: right; margin-top: 1rem; border-top: 1px solid #e2e8f0; padding-top: 1rem;">
-          <button type="submit" class="btn">Confirm Enrollment</button>
+        <div
+          class="stat-card stat-cured"
+          id="outcomesCard"
+          onclick="openPatientList('completed')"
+        >
+          <div class="stat-icon">✅</div>
+          <div class="stat-content">
+            <div class="stat-label">Outcomes (Cured)</div>
+            <div class="stat-value" id="curedCount">0</div>
+          </div>
         </div>
-      </form>
-    </div>
-
-    <!-- MAIN LAYOUT (Calendar + Sidebar) -->
-    <div class="main-layout">
-      <!-- Calendar Section -->
-      <div id="calendar-container">
-        <div id="calendar"></div>
       </div>
 
-      <!-- Legend / Patient Registry Sidebar -->
-      <div class="card" id="legend">
-        <h4 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
-          Patient Registry
-        </h4>
-        <ul>
-          {% for p in patients %}
-            {% if p.events %}
-              <li class="patient-item" style="border-left-color: {{ p.events[0].color }}">
-                <div style="display: flex; flex-direction: column;">
-                  <strong onclick="openPatientDetail('{{ p.uid }}')" style="font-size: 0.95rem; cursor: pointer; transition: color 0.1s;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='inherit'" title="View Details">
-                      {{ p.name }} <span style="font-weight: 400; font-size: 0.8rem; color: var(--primary); opacity: 0.7;">ⓘ</span>
-                  </strong> 
-                  <span style="color: #475569; font-size: 0.8rem;">Age: {{ p.age }} • {{ p.sex }} • {{ p.regime }}</span>
+      <!-- Collapsible Patient Form -->
+      <div
+        class="card"
+        style="
+          padding: 0;
+          overflow: hidden;
+          border: none;
+          background: transparent;
+          box-shadow: none;
+        "
+      >
+        <button id="toggleFormBtn" class="btn toggle-btn">
+          <span><span style="margin-right: 8px">+</span> Add New Patient</span>
+          <span class="icon-toggle">▼</span>
+        </button>
+
+        <form
+          id="patientForm"
+          method="POST"
+          action="/add_patient"
+          class="card"
+          style="margin-top: 10px"
+        >
+          <h3 style="color: var(--primary)">New Patient Enrollment</h3>
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="name">Full Name</label>
+              <input
+                type="text"
+                id="name"
+                name="name"
+                placeholder="e.g. U Ba"
+                required
+              />
+            </div>
+            <div class="form-group">
+              <label for="age">Age</label>
+              <input
+                type="number"
+                id="age"
+                name="age"
+                placeholder="45"
+                required
+              />
+            </div>
+            <div class="form-group">
+              <label for="sex">Sex</label>
+              <select id="sex" name="sex">
+                <option>Male</option>
+                <option>Female</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="address">Address / Contact</label>
+              <input
+                type="text"
+                id="address"
+                name="address"
+                placeholder="Village / Phone"
+              />
+            </div>
+            <div class="form-group">
+              <label for="regime">Treatment Regime</label>
+              <select id="regime" name="regime">
+                <option value="IR">IR (Intensive Phase)</option>
+                <option value="CR">CR (Continuation Phase)</option>
+                <option value="RR">RR (Retreatment)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Cycle Timeline</label>
+              <div
+                id="milestonesPreview"
+                style="
+                  padding: 0.6rem;
+                  background: #f1f5f9;
+                  color: #475569;
+                  border-radius: 6px;
+                  font-size: 0.85rem;
+                "
+              >
+                Loading...
+              </div>
+            </div>
+          </div>
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="start_date">Provisional Start Date</label>
+              <input type="date" id="start_date" name="start_date" required />
+            </div>
+            <div class="form-group" style="flex: 2">
+              <label for="remark">Clinical Notes</label>
+              <input
+                type="text"
+                id="remark"
+                name="remark"
+                placeholder="History, comorbidities..."
+              />
+            </div>
+          </div>
+
+          <div
+            style="
+              text-align: right;
+              margin-top: 1rem;
+              border-top: 1px solid #e2e8f0;
+              padding-top: 1rem;
+            "
+          >
+            <button type="submit" class="btn">Confirm Enrollment</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- MAIN LAYOUT (Calendar + Sidebar) -->
+      <div class="main-layout">
+        <!-- Calendar Section -->
+        <div id="calendar-container">
+          <div id="calendar"></div>
+        </div>
+
+        <!-- Legend / Patient Registry Sidebar -->
+        <div class="card" id="legend">
+          <h4
+            style="
+              margin-bottom: 0.5rem;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+            "
+          >
+            Patient Registry
+          </h4>
+          <div style="margin-bottom: 1rem; position: relative">
+            <input
+              type="text"
+              id="registrySearch"
+              placeholder="Search patients..."
+              style="
+                width: 100%;
+                padding: 8px 12px;
+                padding-left: 35px;
+                border-radius: 20px;
+                border: 1px solid #e2e8f0;
+                font-size: 0.9rem;
+              "
+            />
+            <span
+              style="
+                position: absolute;
+                left: 12px;
+                top: 50%;
+                transform: translateY(-50%);
+                color: #94a3b8;
+              "
+              >🔍</span
+            >
+          </div>
+
+          <div
+            style="
+              margin-bottom: 1rem;
+              padding-bottom: 0.5rem;
+              border-bottom: 1px solid #f1f5f9;
+            "
+          >
+            <label
+              style="
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                cursor: pointer;
+                font-size: 0.85rem;
+                color: #475569;
+              "
+            >
+              <input
+                type="checkbox"
+                id="toggleMyanmarDetails"
+                style="width: 16px; height: 16px"
+              />
+              🇲🇲 Myanmar Lunar Details
+            </label>
+          </div>
+
+          <ul id="registryList">
+            {% for p in patients %} {% if p.events %}
+            <li
+              class="patient-item"
+              data-name="{{ p.name|lower }}"
+              data-uid="{{ p.uid }}"
+              style="border-left-color: {{ p.events[0].color }}"
+            >
+              <div
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: flex-start;
+                "
+              >
+                <div style="flex: 1">
+                  <strong
+                    onclick="openPatientDetail('{{ p.uid }}')"
+                    class="patient-name-link"
+                  >
+                    {{ p.name }} <span class="info-icon">ⓘ</span>
+                  </strong>
+                  <div class="patient-meta">
+                    Age: {{ p.age }} • {{ p.sex }} • {{ p.regime }}
+                  </div>
                 </div>
-                 <div style="margin-top: 5px;">
-                   <button class="deletePatientBtn btn btn-secondary" data-id="{{ p.id }}" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; border-color: transparent; color: #475569; background: #f1f5f9;">
-                      ✕ Remove
-                   </button>
-                 </div>
-              </li>
-            {% endif %}
-          {% endfor %}
-        </ul>
-        {% if not patients %}
-          <div style="text-align: center; padding: 2rem; color: #475569;">
-            <div style="font-size: 2rem; margin-bottom: 0.5rem;">📭</div>
+                <div class="patient-status" id="status-{{ p.uid }}">
+                  <!-- Injected by JS -->
+                  <span class="badge badge-loading">...</span>
+                </div>
+              </div>
+
+              <div class="progress-container" style="margin-top: 10px">
+                <div class="progress-bar-bg">
+                  <div
+                    class="progress-bar-fill"
+                    id="progress-{{ p.uid }}"
+                    style="width: 0%"
+                  ></div>
+                </div>
+                <div class="progress-label" id="progress-text-{{ p.uid }}">
+                  Calculating...
+                </div>
+              </div>
+
+              <div
+                style="
+                  margin-top: 10px;
+                  display: flex;
+                  justify-content: flex-end;
+                "
+              >
+                <button
+                  class="deletePatientBtn btn-text-danger"
+                  data-id="{{ p.id }}"
+                >
+                  ✕ Remove
+                </button>
+              </div>
+            </li>
+            {% endif %} {% endfor %}
+          </ul>
+          {% if not patients %}
+          <div style="text-align: center; padding: 2rem; color: #475569">
+            <div style="font-size: 2rem; margin-bottom: 0.5rem">📭</div>
             No patients currently enrolled.
           </div>
-        {% endif %}
+          {% endif %}
+        </div>
       </div>
-    </div> <!-- End Main Layout -->
+      <!-- End Main Layout -->
+    </div>
+    <!-- End Container -->
 
-  </div> <!-- End Container -->
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
 
-  <!-- Toast Container -->
-  <div id="toast-container"></div>
-
-  <!-- Event Modal (Dialog) -->
-  <div id="eventModal" class="modal-overlay">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h4 id="modalTitle">Milestone Details</h4>
-        <button id="closeModal" class="close-modal">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div id="modalDetails"></div>
-        <!-- Dynamic Content injected by JS -->
+    <!-- Event Modal (Dialog) -->
+    <div id="eventModal" class="modal-overlay" style="z-index: 1010">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h4 id="modalTitle">Milestone Details</h4>
+          <button id="closeModal" class="close-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="modalDetails"></div>
+          <!-- Dynamic Content injected by JS -->
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- WiFi Sync Modal -->
-  <div id="syncModal" class="modal-overlay">
-    <div class="modal-content" style="max-width: 550px;">
-      <div class="modal-header">
-        <h4 id="modalTitle">📡 Team WiFi Sync</h4>
-        <button id="closeSyncModal" class="close-modal">&times;</button>
-      </div>
-      <div class="modal-body">
-        
-        <!-- Tabs -->
-        <div style="display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 1.5rem;">
-            <button class="tab-btn active" data-tab="host">I am the HOST</button>
+    <!-- WiFi Sync Modal -->
+    <div id="syncModal" class="modal-overlay">
+      <div class="modal-content" style="max-width: 550px">
+        <div class="modal-header">
+          <h4 id="modalTitle">📡 Team WiFi Sync</h4>
+          <button id="closeSyncModal" class="close-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- Tabs -->
+          <div
+            style="
+              display: flex;
+              border-bottom: 1px solid var(--border-color);
+              margin-bottom: 1.5rem;
+            "
+          >
+            <button class="tab-btn active" data-tab="host">
+              I am the HOST
+            </button>
             <button class="tab-btn" data-tab="guest">I am a GUEST</button>
-        </div>
+          </div>
 
-        <!-- HOST CONTENT -->
-        <div id="hostTab" class="tab-content active">
-           <h4 style="margin-bottom: 0.5rem; color: var(--primary);">I am the HOST</h4>
-           <div class="alert-box">
-             <p style="margin-bottom:0.25rem; font-size:0.9rem;">Your Local IP Address:</p>
-             <code style="font-size: 1.2rem; font-weight: bold; display: block; margin-bottom: 0.5rem;">{{ share_url }}</code>
-             <p id="hostNameDisplay" style="font-size:0.8rem; color:var(--text-muted); text-align:right;">Host: ...</p>
-           </div>
-           
-           <h5 style="margin-top: 1rem; margin-bottom: 0.5rem;">Joined Devices</h5>
-           <div id="connectedDevicesList" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px; min-height:60px; margin-bottom:1rem; font-size:0.85rem; color:#64748b;">
-                <span class="spinner"></span> Waiting for connections...
-           </div>
+          <!-- HOST CONTENT -->
+          <div id="hostTab" class="tab-content active">
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary)">
+              I am the HOST
+            </h4>
+            <div class="alert-box">
+              <p style="margin-bottom: 0.25rem; font-size: 0.9rem">
+                Your Local IP Address:
+              </p>
+              <code
+                style="
+                  font-size: 1.2rem;
+                  font-weight: bold;
+                  display: block;
+                  margin-bottom: 0.5rem;
+                "
+                >{{ share_url }}</code
+              >
+              <p
+                id="hostNameDisplay"
+                style="
+                  font-size: 0.8rem;
+                  color: var(--text-muted);
+                  text-align: right;
+                "
+              >
+                Host: ...
+              </p>
+            </div>
 
-           <h5 style="margin-bottom: 0.5rem;">Incoming Updates</h5>
-           <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">Check if team members have pushed data to you.</p>
-           
-           <button id="checkUpdatesBtn" class="btn btn-secondary" onclick="checkIncoming()" style="width: 100%; margin-bottom: 1rem;">🔄 Check for Updates</button>
-           <div id="reviewContainer"></div>
-        </div>
+            <h5 style="margin-top: 1rem; margin-bottom: 0.5rem">
+              Joined Devices
+            </h5>
+            <div
+              id="connectedDevicesList"
+              style="
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 10px;
+                min-height: 60px;
+                margin-bottom: 1rem;
+                font-size: 0.85rem;
+                color: #64748b;
+              "
+            >
+              <span class="spinner"></span> Waiting for connections...
+            </div>
 
-        <!-- GUEST CONTENT -->
-        <div id="guestTab" class="tab-content" style="display: none;">
-            <h4 style="margin-bottom: 0.5rem; color: var(--secondary);">I am a GUEST</h4>
-            
+            <h5 style="margin-bottom: 0.5rem">Incoming Updates</h5>
+            <p
+              style="
+                font-size: 0.8rem;
+                color: var(--text-muted);
+                margin-bottom: 0.5rem;
+              "
+            >
+              Check if team members have pushed data to you.
+            </p>
+
+            <button
+              id="checkUpdatesBtn"
+              class="btn btn-secondary"
+              onclick="checkIncoming()"
+              style="width: 100%; margin-bottom: 1rem"
+            >
+              🔄 Check for Updates
+            </button>
+            <div id="reviewContainer"></div>
+          </div>
+
+          <!-- GUEST CONTENT -->
+          <div id="guestTab" class="tab-content" style="display: none">
+            <h4 style="margin-bottom: 0.5rem; color: var(--secondary)">
+              I am a GUEST
+            </h4>
+
             <div class="form-group">
-                <label>My Device Name</label>
-                <input type="text" id="myDeviceName" class="form-control" placeholder="e.g. Dr. Aung's Tablet">
+              <label>My Device Name</label>
+              <input
+                type="text"
+                id="myDeviceName"
+                class="form-control"
+                placeholder="e.g. Dr. Aung's Tablet"
+              />
             </div>
 
             <div class="form-group">
-                <label>Host IP Address</label>
-                <div style="display:flex; gap:0.5rem;">
-                    <input type="text" id="hostIpInput" class="form-control" placeholder="e.g. 192.168.1.5" style="flex:1;">
-                    <button id="findHostBtn" class="btn btn-secondary" style="white-space:nowrap; padding: 0 1rem;" onclick="findHostServer()">🔍 Find Server</button>
-                </div>
-                <div id="scanStatus" style="font-size:0.8rem; color:var(--text-muted); margin-top:4px; display:none;">
-                    Scanning network... <span class="spinner" style="width:12px; height:12px;"></span>
-                </div>
+              <label>Host IP Address</label>
+              <div style="display: flex; gap: 0.5rem">
+                <input
+                  type="text"
+                  id="hostIpInput"
+                  class="form-control"
+                  placeholder="e.g. 192.168.1.5"
+                  style="flex: 1"
+                />
+                <button
+                  id="findHostBtn"
+                  class="btn btn-secondary"
+                  style="white-space: nowrap; padding: 0 1rem"
+                  onclick="findHostServer()"
+                >
+                  🔍 Find Server
+                </button>
+              </div>
+              <div
+                id="scanStatus"
+                style="
+                  font-size: 0.8rem;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                  display: none;
+                "
+              >
+                Scanning network...
+                <span class="spinner" style="width: 12px; height: 12px"></span>
+              </div>
             </div>
-           
-           <div id="guestActions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-               <div style="border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px;">
-                   <strong style="display:block; margin-bottom: 0.5rem; color: var(--primary);">📥 Pull Data</strong>
-                   <button class="btn btn-secondary" style="width:100%; margin-bottom: 0.5rem; font-size: 0.8rem;" onclick="fetchFromHost('append')">Append to My List</button>
-                   <button class="btn btn-danger" style="width:100%; font-size: 0.8rem;" onclick="if(confirm('Replace ALL local data with Host data?')) fetchFromHost('replace')">Replace All</button>
-               </div>
-               
-               <div style="border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px;">
-                   <strong style="display:block; margin-bottom: 0.5rem; color: var(--success);">📤 Push Data</strong>
-                   <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Send my records to Host for review.</p>
-                   <button class="btn" style="width:100%; background: var(--success);" onclick="pushToHost()">Push to Host</button>
-               </div>
-           </div>
-           
-           <div id="connectionStatus" style="font-size: 0.9rem; margin-top: 1rem; font-weight: 600; text-align: center;"></div>
+
+            <div
+              id="guestActions"
+              style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem"
+            >
+              <div
+                style="
+                  border: 1px solid var(--border-color);
+                  padding: 1rem;
+                  border-radius: 8px;
+                "
+              >
+                <strong
+                  style="
+                    display: block;
+                    margin-bottom: 0.5rem;
+                    color: var(--primary);
+                  "
+                  >📥 Pull Data</strong
+                >
+                <button
+                  class="btn btn-secondary"
+                  style="width: 100%; margin-bottom: 0.5rem; font-size: 0.8rem"
+                  onclick="fetchFromHost('append')"
+                >
+                  Append to My List
+                </button>
+                <button
+                  class="btn btn-danger"
+                  style="width: 100%; font-size: 0.8rem"
+                  onclick="if(confirm('Replace ALL local data with Host data?')) fetchFromHost('replace')"
+                >
+                  Replace All
+                </button>
+              </div>
+
+              <div
+                style="
+                  border: 1px solid var(--border-color);
+                  padding: 1rem;
+                  border-radius: 8px;
+                "
+              >
+                <strong
+                  style="
+                    display: block;
+                    margin-bottom: 0.5rem;
+                    color: var(--success);
+                  "
+                  >📤 Push Data</strong
+                >
+                <p
+                  style="
+                    font-size: 0.75rem;
+                    color: var(--text-muted);
+                    margin-bottom: 0.5rem;
+                  "
+                >
+                  Send my records to Host for review.
+                </p>
+                <button
+                  class="btn"
+                  style="width: 100%; background: var(--success)"
+                  onclick="pushToHost()"
+                >
+                  Push to Host
+                </button>
+              </div>
+            </div>
+
+            <div
+              id="connectionStatus"
+              style="
+                font-size: 0.9rem;
+                margin-top: 1rem;
+                font-weight: 600;
+                text-align: center;
+              "
+            ></div>
+          </div>
         </div>
-
       </div>
     </div>
-  </div>
 
-  <!-- Delete Confirmation Modal -->
-  <div id="confirmDeleteModal" class="modal-overlay">
-    <div class="modal-content" style="max-width: 400px; text-align: center; padding-bottom: 2rem;">
-      <div class="modal-body">
-        <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
-        <h3 style="color: var(--danger); margin-bottom: 0.5rem;">Remove Patient?</h3>
-        <p style="color: var(--text-muted); margin-bottom: 2rem;">
-          Are you sure you want to delete <strong id="deletePatientName" style="color: var(--text-main);"></strong>? 
-          <br>This action cannot be undone.
-        </p>
-        <div style="display: flex; justify-content: center; gap: 1rem;">
-          <button id="cancelDeleteBtn" class="btn btn-secondary">Cancel</button>
-          <button id="confirmDeleteBtn" class="btn" style="background-color: var(--danger);">Yes, Delete</button>
+    <!-- Delete Confirmation Modal -->
+    <div id="confirmDeleteModal" class="modal-overlay">
+      <div
+        class="modal-content"
+        style="max-width: 400px; text-align: center; padding-bottom: 2rem"
+      >
+        <div class="modal-body">
+          <div style="font-size: 3rem; margin-bottom: 1rem">⚠️</div>
+          <h3 style="color: var(--danger); margin-bottom: 0.5rem">
+            Remove Patient?
+          </h3>
+          <p style="color: var(--text-muted); margin-bottom: 2rem">
+            Are you sure you want to delete
+            <strong
+              id="deletePatientName"
+              style="color: var(--text-main)"
+            ></strong
+            >? <br />This action cannot be undone.
+          </p>
+          <div style="display: flex; justify-content: center; gap: 1rem">
+            <button id="cancelDeleteBtn" class="btn btn-secondary">
+              Cancel
+            </button>
+            <button
+              id="confirmDeleteBtn"
+              class="btn"
+              style="background-color: var(--danger)"
+            >
+              Yes, Delete
+            </button>
+          </div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- Patient List Modal -->
-  <div id="patientListModal" class="modal-overlay">
-    <div class="modal-content" style="max-width: 600px; height: 80vh; display: flex; flex-direction: column;">
-      <div class="modal-header">
-        <h3 id="patientListTitle">All Patients</h3>
-        <span class="close-modal" id="closePatientList">&times;</span>
-      </div>
-      <div style="padding: 10px; border-bottom: 1px solid #e2e8f0; background: #f8fafc;">
-          <input type="text" id="patientSearch" placeholder="🔍 Search by name..." style="width: 100%; padding: 8px; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px;">
-          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-              <select id="patientFilter" style="flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                  <option value="all">All Status</option>
-                  <option value="active">Active Treatment</option>
-                  <option value="completed">Completed / Cured</option>
-                  <option value="outcome">Has Outcome</option>
-              </select>
-              <input type="month" id="patientMonthFilter" style="flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #e2e8f0;">
+    <!-- Patient List Modal -->
+    <div id="patientListModal" class="modal-overlay">
+      <div
+        class="modal-content"
+        style="
+          max-width: 600px;
+          height: 80vh;
+          display: flex;
+          flex-direction: column;
+        "
+      >
+        <div class="modal-header">
+          <h3 id="patientListTitle">All Patients</h3>
+          <span class="close-modal" id="closePatientList">&times;</span>
+        </div>
+        <div
+          style="
+            padding: 10px;
+            border-bottom: 1px solid #e2e8f0;
+            background: #f8fafc;
+          "
+        >
+          <input
+            type="text"
+            id="patientSearch"
+            placeholder="🔍 Search by name..."
+            style="
+              width: 100%;
+              padding: 8px;
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              margin-bottom: 8px;
+            "
+          />
+          <div style="display: flex; gap: 8px; margin-bottom: 8px">
+            <select
+              id="patientFilter"
+              style="
+                flex: 1;
+                padding: 6px;
+                border-radius: 6px;
+                border: 1px solid #e2e8f0;
+              "
+            >
+              <option value="all">All Status</option>
+              <option value="active">Active Treatment</option>
+              <option value="completed">Completed / Cured</option>
+              <option value="outcome">Has Outcome</option>
+            </select>
+            <input
+              type="month"
+              id="patientMonthFilter"
+              style="
+                flex: 1;
+                padding: 6px;
+                border-radius: 6px;
+                border: 1px solid #e2e8f0;
+              "
+            />
           </div>
-          <div style="display: flex; gap: 8px;">
-              <select id="patientSort" style="flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                  <option value="name">Sort: Name (A-Z)</option>
-                  <option value="age">Sort: Age</option>
-                  <option value="newest">Sort: Newest</option>
-              </select>
+          <div style="display: flex; gap: 8px">
+            <select
+              id="patientSort"
+              style="
+                flex: 1;
+                padding: 6px;
+                border-radius: 6px;
+                border: 1px solid #e2e8f0;
+              "
+            >
+              <option value="name">Sort: Name (A-Z)</option>
+              <option value="age">Sort: Age</option>
+              <option value="newest">Sort: Newest</option>
+            </select>
           </div>
-          <div id="patientListCount" style="padding: 4px 0 0 2px; font-size: 0.85rem; color: #64748b; font-weight: 500;"></div>
-      </div>
-      <div id="patientListContainer" style="flex: 1; overflow-y: auto; padding: 0;">
-         <!-- List injected by JS -->
+          <div
+            id="patientListCount"
+            style="
+              padding: 4px 0 0 2px;
+              font-size: 0.85rem;
+              color: #64748b;
+              font-weight: 500;
+            "
+          ></div>
+        </div>
+        <div
+          id="patientListContainer"
+          style="flex: 1; overflow-y: auto; padding: 0"
+        >
+          <!-- List injected by JS -->
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Patient Detail Modal -->
-  <div id="patientDetailModal" class="modal-overlay" style="z-index: 1002;">
-      <div class="modal-content" style="max-width: 500px; max-height: 90vh; overflow-y: auto;">
-          <div class="modal-header" style="background: var(--primary); color: white;">
-              <h3 id="pdName">Patient Details</h3>
-              <span class="close-modal" id="closePatientDetail" style="color: white;">&times;</span>
+    <!-- Patient Detail Modal -->
+    <div id="patientDetailModal" class="modal-overlay" style="z-index: 1002">
+      <div
+        class="modal-content"
+        style="max-width: 500px; max-height: 90vh; overflow-y: auto"
+      >
+        <div
+          class="modal-header"
+          style="background: var(--primary); color: white"
+        >
+          <h3 id="pdName">Patient Details</h3>
+          <span class="close-modal" id="closePatientDetail" style="color: white"
+            >&times;</span
+          >
+        </div>
+        <div id="pdContent" style="padding: 15px">
+          <div
+            id="pdHeader"
+            style="
+              display: flex;
+              gap: 10px;
+              margin-bottom: 20px;
+              border-bottom: 1px solid #eee;
+              padding-bottom: 15px;
+            "
+          ></div>
+
+          <div
+            class="section-title"
+            style="
+              font-weight: 600;
+              color: #475569;
+              border-bottom: 2px solid #e2e8f0;
+              margin-bottom: 10px;
+              padding-bottom: 4px;
+            "
+          >
+            Treatment Timeline
           </div>
-          <div id="pdContent" style="padding: 15px;">
-              <div id="pdHeader" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px;"></div>
-              
-              <div class="section-title" style="font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0; margin-bottom: 10px; padding-bottom: 4px;">Treatment Timeline</div>
-              <div id="pdTimeline"></div>
-          </div>
+          <div id="pdTimeline"></div>
+        </div>
       </div>
-  </div>
+    </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.js"></script>
-  <script src="{{ url_for('static', filename='script.js') }}"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}")
-          .then(reg => console.log('SW Registered!', reg.scope))
-          .catch(err => console.log('SW Fail:', err));
-      });
-    }
-  </script>
-</body>
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.js"></script>
+    <script src="{{ url_for('static', filename='mmcal.js') }}"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("{{ url_for('static', filename='sw.js') }}")
+            .then((reg) => console.log("SW Registered!", reg.scope))
+            .catch((err) => console.log("SW Fail:", err));
+        });
+      }
+    </script>
+  </body>
 </html>
