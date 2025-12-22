@@ -57,7 +57,8 @@ header h1 {
 }
 
 .container {
-  max-width: 1400px;
+  max-width: 1600px; /* Wider for desktop */
+  width: 95%;        /* Fluid width */
   margin: 2rem auto;
   padding: 0 1.5rem;
 }
@@ -66,9 +67,53 @@ header h1 {
 /* Dashboard */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  /* On wide screens, force 3 columns. On small, auto-wrap */
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); 
   gap: 1.5rem;
   margin-bottom: 2rem;
+}
+
+/* ... (stat-card styles remain same) ... */
+
+/* Responsive Main Layout */
+.main-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Tablet Landscape & Desktop */
+@media (min-width: 900px) {
+  .main-layout {
+    display: grid;
+    /* Calendar takes available space, Sidebar is fixed width */
+    grid-template-columns: 1fr 360px; 
+    gap: 2rem;
+    align-items: start;
+  }
+  
+  #legend {
+    margin-bottom: 0;
+    max-height: calc(100vh - 120px); /* Fit to viewport height */
+    overflow-y: auto;
+    position: sticky;
+    top: 90px;
+    
+    /* Better sidebar styling */
+    border-left: 1px solid var(--border-color);
+    box-shadow: none; /* Flatten sidebar for cleaner look */
+    background: transparent; /* Blend with body */
+  }
+  
+  #legend .card { 
+      background: transparent; border: none; box-shadow: none; 
+  }
+  
+  #legend ul {
+      display: flex; /* Override grid from mobile */
+      flex-direction: column;
+      gap: 0.75rem;
+  }
 }
 
 .stat-card {
@@ -364,9 +409,37 @@ input:focus, select:focus, textarea:focus {
 } 
 .modal-body { padding: 1.5rem; }
 
+/* Tabs */
+.tab-btn {
+    background: none;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+}
+.tab-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+.tab-content { animation: fadeIn 0.2s; }
+
+
 /* Close Button */
 .close-modal {
     background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-muted);
 }
 .close-modal:hover { color: var(--danger); }
+
+#hostTab {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.sync-check {
+    transform: scale(0.85); /* Smaller checkbox */
+    cursor: pointer;
+}
 

@@ -9,16 +9,23 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cycles.db'
 db = SQLAlchemy(app)
 
 # ---- MODELS ----
+import uuid
+
+class DeletedRecord(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    uid = db.Column(db.String(36), nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
 class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50))
-    age = db.Column(db.Integer)
-    sex = db.Column(db.String(10))
-    address = db.Column(db.String(100))
-    regime = db.Column(db.String(10))
-    remark = db.Column(db.String(200))
-
-    events = db.relationship("Event", backref="patient", lazy=True)
+    uid = db.Column(db.String(36), unique=True, default=lambda: str(uuid.uuid4())) # Unique Sync ID
+    name = db.Column(db.String(100), nullable=False)
+    age = db.Column(db.Integer, nullable=False)
+    sex = db.Column(db.String(10), nullable=False)
+    address = db.Column(db.String(200))
+    regime = db.Column(db.String(50), nullable=False)
+    remark = db.Column(db.String(500))
+    events = db.relationship("Event", backref="patient", lazy=True, cascade="all, delete-orphan")
 
 class Event(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -34,6 +41,8 @@ class Event(db.Model):
 
     original_start = db.Column(db.String(20))  # store original planned date
 
+import socket
+
 # ---- HELPER ----
 def get_unique_color():
     base_colors = ["#FF5733", "#33FF57", "#3357FF", "#FF33A1", "#33FFF2", "#FFC733", "#8E44AD", "#F39C12", "#1ABC9C", "#2ECC71"]
@@ -43,11 +52,25 @@ def get_unique_color():
             return c
     return random.choice(base_colors)  # fallback
 
+def get_local_ip():
+    try:
+        # Connect to a dummy external IP to determine the best interface
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
+
 # ---- ROUTES ----
 @app.route("/")
 def index():
     patients = Patient.query.all()
-    return render_template("index.html", patients=patients)
+    host_ip = get_local_ip()
+    port = int(os.environ.get("PORT", 5000))
+    share_url = f"http://{host_ip}:{port}"
+    return render_template("index.html", patients=patients, share_url=share_url)
 
 @app.route("/events")
 def events():
@@ -236,18 +259,307 @@ def update_event():
 
 @app.route("/delete_patient/<int:patient_id>", methods=["POST"])
 def delete_patient(patient_id):
-    patient = Patient.query.get(patient_id)
-    if not patient:
+    try:
+        p = Patient.query.get(patient_id)
+        if p:
+            # Create Tombstone
+            if p.uid:
+                dr = DeletedRecord(uid=p.uid)
+                db.session.add(dr)
+            
+            db.session.delete(p)
+            db.session.commit()
+            return jsonify(success=True)
         return jsonify(success=False, message="Patient not found"), 404
-    
-    # Delete all events first
-    Event.query.filter_by(patient_id=patient.id).delete()
-    # Delete patient
-    db.session.delete(patient)
-    db.session.commit()
-    
-    return jsonify(success=True)
+    except Exception as e:
+        db.session.rollback()
+        return jsonify(success=False, message=str(e)), 500
 
+
+# ---- SYNC API ----
+
+# 1. Export Data (Host gives data to Guest)
+@app.route("/api/get_all_data")
+def get_all_data():
+    patients = Patient.query.all()
+    deleted = DeletedRecord.query.all()
+    
+    data = []
+    for p in patients:
+        p_data = {
+            "uid": p.uid,
+            "name": p.name, "age": p.age, "sex": p.sex, 
+            "address": p.address, "regime": p.regime, "remark": p.remark,
+            "events": []
+        }
+        for e in p.events:
+            p_data["events"].append({
+                "title": e.title, "start": e.start, "original_start": e.original_start,
+                "color": e.color, "missed_days": e.missed_days, 
+                "remark": e.remark, "outcome": e.outcome
+            })
+        data.append(p_data)
+        
+    deleted_uids = [d.uid for d in deleted]
+    
+    return jsonify(success=True, data=data, deleted=deleted_uids)
+
+# 2. Merge Data (Guest pulls from Host -> Appends/Replaces Local)
+@app.route("/api/merge_data", methods=["POST"])
+def merge_data():
+    try:
+        req = request.json
+        mode = req.get("mode", "append") # 'append' or 'replace'
+        incoming_patients = req.get("data", [])
+        incoming_deleted = req.get("deleted", []) # New
+
+        if mode == "replace":
+            db.drop_all()
+            db.create_all()
+        
+        # 1. Process Deletions First
+        for d_uid in incoming_deleted:
+            # Check if we have this patient active
+            p = Patient.query.filter_by(uid=d_uid).first()
+            if p:
+                db.session.delete(p)
+            # Ensure tombstone exists locally too
+            if not DeletedRecord.query.filter_by(uid=d_uid).first():
+                db.session.add(DeletedRecord(uid=d_uid))
+        
+        # 2. Process Adds/Updates
+        count = 0
+        for p_in in incoming_patients:
+            in_uid = p_in.get("uid")
+            if mode == "append":
+                exists = None
+                if in_uid: exists = Patient.query.filter_by(uid=in_uid).first()
+                if not exists: exists = Patient.query.filter_by(name=p_in["name"]).first()
+                if exists: continue 
+
+            new_p = Patient(
+                uid=in_uid if in_uid else str(uuid.uuid4()),
+                name=p_in["name"], age=p_in["age"], sex=p_in["sex"],
+                address=p_in["address"], regime=p_in["regime"], remark=p_in["remark"]
+            )
+            db.session.add(new_p)
+            db.session.flush()
+
+            for e_in in p_in["events"]:
+                new_e = Event(
+                    title=e_in["title"], start=e_in["start"], original_start=e_in["original_start"],
+                    color=e_in["color"], missed_days=e_in["missed_days"],
+                    remark=e_in["remark"], outcome=e_in["outcome"],
+                    patient_id=new_p.id
+                )
+                db.session.add(new_e)
+            count += 1
+        
+        db.session.commit()
+        return jsonify(success=True, count=count)
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
+
+# 3. Stage Incoming (Guest pushes to Host -> Host reviews)
+DEVICE_STAGING = {} # { "DeviceName": { "data": [], "deleted": [], "timestamp": ... } }
+CONNECTED_DEVICES = {} 
+
+@app.route("/api/stage_incoming", methods=["POST"])
+def stage_incoming():
+    global DEVICE_STAGING, CONNECTED_DEVICES
+    try:
+        data = request.json
+        incoming_data = data.get("data", [])
+        incoming_deleted = data.get("deleted", [])
+        device_name = data.get("device_name", "Unknown Guest")
+        
+        # Update Stats
+        client_ip = request.remote_addr
+        if device_name not in CONNECTED_DEVICES:
+            CONNECTED_DEVICES[device_name] = { "ip": client_ip, "pushes": 0, "last_seen": None }
+        
+        CONNECTED_DEVICES[device_name]["pushes"] += 1
+        CONNECTED_DEVICES[device_name]["last_seen"] = datetime.now().strftime("%H:%M:%S")
+        
+        # Store Data Per Device
+        DEVICE_STAGING[device_name] = {
+            "data": incoming_data,
+            "deleted": incoming_deleted,
+            "timestamp": datetime.now()
+        }
+        
+        return jsonify(success=True, count=len(incoming_data) + len(incoming_deleted))
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
+
+@app.route("/api/get_host_info")
+def get_host_info():
+    hostname = socket.gethostname()
+    devices_list = []
+    for name, info in CONNECTED_DEVICES.items():
+        # Check if pending data exists
+        has_pending = name in DEVICE_STAGING and (len(DEVICE_STAGING[name]["data"]) > 0 or len(DEVICE_STAGING[name]["deleted"]) > 0)
+        
+        devices_list.append({
+            "name": name,
+            "ip": info["ip"],
+            "pushes": info["pushes"],
+            "last_seen": info["last_seen"],
+            "has_pending": has_pending
+        })
+        
+    return jsonify({
+        "hostname": hostname,
+        "devices": devices_list
+    })
+
+@app.route("/api/get_staged_data")
+def get_staged_data():
+    target_device = request.args.get("device")
+    
+    if not target_device or target_device not in DEVICE_STAGING:
+        return jsonify(success=True, data=[], message="No device selected or no data.")
+
+    current_stage = DEVICE_STAGING[target_device]
+    staged_data = current_stage.get("data", [])
+    staged_deleted = current_stage.get("deleted", [])
+
+    enriched = []
+    
+    # 1. Handle Regular Data
+    for p in staged_data:
+        status = "NEW"
+        existing = None
+        if p.get("uid"): existing = Patient.query.filter_by(uid=p.get("uid")).first()
+        if not existing: existing = Patient.query.filter_by(name=p["name"]).first()
+        
+        if existing:
+             is_diff = False
+             if existing.name != p["name"]: is_diff = True
+             if existing.age != p["age"]: is_diff = True
+             if existing.sex != p["sex"]: is_diff = True
+             if existing.address != p["address"]: is_diff = True
+             if existing.regime != p["regime"]: is_diff = True
+             if existing.remark != p["remark"]: is_diff = True
+             
+             if len(existing.events) != len(p["events"]): is_diff = True
+             else:
+                 ex_evs = sorted(existing.events, key=lambda x: x.original_start)
+                 in_evs = sorted(p["events"], key=lambda x: x["original_start"])
+                 for i in range(len(ex_evs)):
+                     e1 = ex_evs[i]; e2 = in_evs[i]
+                     if (e1.missed_days != e2["missed_days"] or e1.outcome != e2["outcome"] or e1.start != e2["start"]):
+                         is_diff = True; break
+             
+             status = "UPDATE" if is_diff else "SAME"
+
+        enriched.append({**p, "status": status, "type": "record"})
+
+    # 2. Handle Deletions
+    for del_uid in staged_deleted:
+        p_active = Patient.query.filter_by(uid=del_uid).first()
+        if p_active:
+            enriched.append({
+                "uid": del_uid,
+                "name": p_active.name + " (Deleted by peer)",
+                "status": "DELETE",
+                "type": "deletion"
+            })
+
+    return jsonify(success=True, data=enriched)
+
+@app.route("/api/commit_staged", methods=["POST"])
+def commit_staged():
+    global DEVICE_STAGING
+    try:
+        target_device = request.json.get("device")
+        selected_indices = request.json.get("indices", [])
+        
+        if not target_device or target_device not in DEVICE_STAGING:
+             return jsonify(success=False, message="Invalid session"), 400
+
+        current_stage = DEVICE_STAGING[target_device]
+        staged_data = current_stage.get("data", [])
+        staged_deleted = current_stage.get("deleted", [])
+        
+        # Reconstruct View List
+        view_list = []
+        for i, p in enumerate(staged_data):
+            view_list.append({"type": "record", "idx": i, "data": p})
+        for i, uid in enumerate(staged_deleted):
+            p_active = Patient.query.filter_by(uid=uid).first()
+            if p_active:
+                view_list.append({"type": "deletion", "idx": i, "uid": uid})
+        
+        count = 0
+        for ui_idx in selected_indices:
+            if ui_idx < 0 or ui_idx >= len(view_list): continue
+            
+            item = view_list[ui_idx]
+            
+            if item["type"] == "deletion":
+                uid = item["uid"]
+                p = Patient.query.filter_by(uid=uid).first()
+                if p:
+                    db.session.delete(p)
+                    if not DeletedRecord.query.filter_by(uid=uid).first():
+                        db.session.add(DeletedRecord(uid=uid))
+                count += 1
+            
+            elif item["type"] == "record":
+                p_in = item["data"]
+                in_uid = p_in.get("uid")
+                existing = None
+                if in_uid: existing = Patient.query.filter_by(uid=in_uid).first()
+                if not existing: existing = Patient.query.filter_by(name=p_in["name"]).first()
+                
+                if existing:
+                    existing.name = p_in["name"]; existing.age = p_in["age"]; existing.address = p_in["address"]
+                    existing.regime = p_in["regime"]; existing.remark = p_in["remark"]
+                    Event.query.filter_by(patient_id=existing.id).delete()
+                    for e_in in p_in["events"]:
+                        db.session.add(Event(
+                            title=e_in["title"], start=e_in["start"], original_start=e_in["original_start"],
+                            color=e_in["color"], missed_days=e_in["missed_days"], remark=e_in["remark"], outcome=e_in["outcome"],
+                            patient_id=existing.id
+                        ))
+                else:
+                    new_p = Patient(
+                        uid=in_uid if in_uid else str(uuid.uuid4()),
+                        name=p_in["name"], age=p_in["age"], sex=p_in["sex"],
+                        address=p_in["address"], regime=p_in["regime"], remark=p_in["remark"]
+                    )
+                    db.session.add(new_p)
+                    db.session.flush()
+                    for e_in in p_in["events"]:
+                        db.session.add(Event(
+                            title=e_in["title"], start=e_in["start"], original_start=e_in["original_start"],
+                            color=e_in["color"], missed_days=e_in["missed_days"], remark=e_in["remark"], outcome=e_in["outcome"],
+                            patient_id=new_p.id
+                        ))
+                count += 1
+
+        db.session.commit()
+        
+        # Cleanup: Remove committed items? 
+        # For simplicity, if we commit, we assume session is done or keep it for refresh.
+        # Let's clear the device staging to avoid double commit.
+        del DEVICE_STAGING[target_device]
+        
+        return jsonify(success=True, count=count)
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
+
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
+
+# ---- CORS ----
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 if __name__ == "__main__":
     with app.app_context():

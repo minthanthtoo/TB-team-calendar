@@ -9,6 +9,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+  <meta name="theme-color" content="#0ea5e9">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3063/3063176.png">
 </head>
 <body>
 
@@ -17,8 +20,20 @@
       <span style="font-size: 1.5rem; margin-right: 0.5rem;">🏥</span> 
       TB Team Cycle Tracker
     </h1>
-    <div style="font-size: 0.85rem; color: #475569; font-weight: 500;">
-      <span id="headerCount">{{ patients|length }}</span> PatientRecords
+    <div style="display: flex; flex-direction: column; align-items: flex-end;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+          <!-- Sync Button -->
+          <button id="wifiSyncBtn" style="border: none; background: #f1f5f9; color: var(--text-main); font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+             📡 WiFi Sync
+          </button>
+          <!-- Network Status -->
+          <div id="networkStatus" style="font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; background: #e0f2fe; color: #0284c7; display: inline-flex; align-items: center; gap: 4px;">
+            <span style="width: 8px; height: 8px; background: #0284c7; border-radius: 50%;"></span> Online
+          </div>
+      </div>
+      <div style="font-size: 0.85rem; color: #475569; font-weight: 500;">
+        <span id="headerCount">{{ patients|length }}</span> PatientRecords
+      </div>
     </div>
   </header>
 
@@ -167,6 +182,83 @@
     </div>
   </div>
 
+  <!-- WiFi Sync Modal -->
+  <div id="syncModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 550px;">
+      <div class="modal-header">
+        <h4 id="modalTitle">📡 Team WiFi Sync</h4>
+        <button id="closeSyncModal" class="close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <!-- Tabs -->
+        <div style="display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 1.5rem;">
+            <button class="tab-btn active" data-tab="host">I am the HOST</button>
+            <button class="tab-btn" data-tab="guest">I am a GUEST</button>
+        </div>
+
+        <!-- HOST CONTENT -->
+        <div id="hostTab" class="tab-content active">
+           <h4 style="margin-bottom: 0.5rem; color: var(--primary);">I am the HOST</h4>
+           <div class="alert-box">
+             <p style="margin-bottom:0.25rem; font-size:0.9rem;">Your Local IP Address:</p>
+             <code style="font-size: 1.2rem; font-weight: bold; display: block; margin-bottom: 0.5rem;">{{ share_url }}</code>
+             <p id="hostNameDisplay" style="font-size:0.8rem; color:var(--text-muted); text-align:right;">Host: ...</p>
+           </div>
+           
+           <h5 style="margin-top: 1rem; margin-bottom: 0.5rem;">Joined Devices</h5>
+           <div id="connectedDevicesList" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px; min-height:60px; margin-bottom:1rem; font-size:0.85rem; color:#64748b;">
+                <span class="spinner"></span> Waiting for connections...
+           </div>
+
+           <h5 style="margin-bottom: 0.5rem;">Incoming Updates</h5>
+           <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">Check if team members have pushed data to you.</p>
+           
+           <button id="checkUpdatesBtn" class="btn btn-secondary" onclick="checkIncoming()" style="width: 100%; margin-bottom: 1rem;">🔄 Check for Updates</button>
+           <div id="reviewContainer"></div>
+        </div>
+
+        <!-- GUEST CONTENT -->
+        <div id="guestTab" class="tab-content" style="display: none;">
+            <h4 style="margin-bottom: 0.5rem; color: var(--secondary);">I am a GUEST</h4>
+            
+            <div class="form-group">
+                <label>My Device Name</label>
+                <input type="text" id="myDeviceName" class="form-control" placeholder="e.g. Dr. Aung's Tablet">
+            </div>
+
+            <div class="form-group">
+                <label>Host IP Address</label>
+                <div style="display:flex; gap:0.5rem;">
+                    <input type="text" id="hostIpInput" class="form-control" placeholder="e.g. 192.168.1.5" style="flex:1;">
+                    <button id="findHostBtn" class="btn btn-secondary" style="white-space:nowrap; padding: 0 1rem;" onclick="findHostServer()">🔍 Find Server</button>
+                </div>
+                <div id="scanStatus" style="font-size:0.8rem; color:var(--text-muted); margin-top:4px; display:none;">
+                    Scanning network... <span class="spinner" style="width:12px; height:12px;"></span>
+                </div>
+            </div>
+           
+           <div id="guestActions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+               <div style="border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px;">
+                   <strong style="display:block; margin-bottom: 0.5rem; color: var(--primary);">📥 Pull Data</strong>
+                   <button class="btn btn-secondary" style="width:100%; margin-bottom: 0.5rem; font-size: 0.8rem;" onclick="fetchFromHost('append')">Append to My List</button>
+                   <button class="btn btn-danger" style="width:100%; font-size: 0.8rem;" onclick="if(confirm('Replace ALL local data with Host data?')) fetchFromHost('replace')">Replace All</button>
+               </div>
+               
+               <div style="border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px;">
+                   <strong style="display:block; margin-bottom: 0.5rem; color: var(--success);">📤 Push Data</strong>
+                   <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Send my records to Host for review.</p>
+                   <button class="btn" style="width:100%; background: var(--success);" onclick="pushToHost()">Push to Host</button>
+               </div>
+           </div>
+           
+           <div id="connectionStatus" style="font-size: 0.9rem; margin-top: 1rem; font-weight: 600; text-align: center;"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <!-- Delete Confirmation Modal -->
   <div id="confirmDeleteModal" class="modal-overlay">
     <div class="modal-content" style="max-width: 400px; text-align: center; padding-bottom: 2rem;">
@@ -187,5 +279,14 @@
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.js"></script>
   <script src="{{ url_for('static', filename='script.js') }}"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}")
+          .then(reg => console.log('SW Registered!', reg.scope))
+          .catch(err => console.log('SW Fail:', err));
+      });
+    }
+  </script>
 </body>
 </html>

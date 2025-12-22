@@ -19,6 +19,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 3000);
   }
 
+  // -- Network Status --
+  function updateNetworkStatus() {
+    const statusEl = document.getElementById('networkStatus');
+    if (!statusEl) return;
+    
+    if (navigator.onLine) {
+        statusEl.innerHTML = '<span style="width: 8px; height: 8px; background: #10b981; border-radius: 50%;"></span> Online';
+        statusEl.style.background = '#d1fae5';
+        statusEl.style.color = '#059669';
+    } else {
+        statusEl.innerHTML = '<span style="width: 8px; height: 8px; background: #ef4444; border-radius: 50%;"></span> Offline';
+        statusEl.style.background = '#fee2e2';
+        statusEl.style.color = '#b91c1c';
+        showToast("You are offline. Changes may not save.", "error");
+    }
+  }
+
+  window.addEventListener('online', updateNetworkStatus);
+  window.addEventListener('offline', updateNetworkStatus);
+  updateNetworkStatus(); // Initial check
+
   // -- Mobile Responsive View --
   const isMobile = window.innerWidth < 768;
   const initialViewType = isMobile ? 'listMonth' : 'dayGridMonth';
@@ -327,8 +348,267 @@ document.addEventListener('DOMContentLoaded', function() {
     addPatientForm.addEventListener('submit', function() {
         const btn = this.querySelector('button[type="submit"]');
         btn.disabled = true;
-        btn.innerHTML = 'Adding... <span class="spinner"></span>'; // Spinner class needed in CSS
+        btn.innerHTML = 'Adding... <span class="spinner"></span>'; 
     });
+  }
+
+  // -- WiFi Sync Logic --
+  const syncBtn = document.getElementById('wifiSyncBtn');
+  const syncModal = document.getElementById('syncModal');
+  const closeSyncBtn = document.getElementById('closeSyncModal');
+  const deviceNameInput = document.getElementById('myDeviceName');
+
+  // Load Device Name
+  if(deviceNameInput) {
+      const savedName = localStorage.getItem('tb_device_name');
+      if(savedName) deviceNameInput.value = savedName;
+      
+      deviceNameInput.addEventListener('input', (e) => {
+          localStorage.setItem('tb_device_name', e.target.value);
+      });
+  }
+
+  if (syncBtn && syncModal) {
+      syncBtn.onclick = function() {
+          syncModal.style.display = 'flex';
+          // Auto-start polling if Host tab is active (default)
+          if(document.getElementById('hostTab').style.display !== 'none') {
+             pollHostInfo();
+          }
+      }
+      // ... (closeBtn logic same) ...
+      if (closeSyncBtn) {
+          closeSyncBtn.onclick = function() {
+              syncModal.style.display = 'none';
+          }
+      }
+      
+      // Tabs
+      const tabs = document.querySelectorAll('.tab-btn');
+      const contents = document.querySelectorAll('.tab-content');
+      
+      tabs.forEach(tab => {
+          tab.addEventListener('click', () => {
+              tabs.forEach(t => t.classList.remove('active'));
+              contents.forEach(c => c.style.display = 'none');
+              
+              tab.classList.add('active');
+              const target = document.getElementById(tab.dataset.tab + 'Tab');
+              if (target) {
+                  target.style.display = 'block';
+                  if(tab.dataset.tab === 'host') pollHostInfo(); 
+              }
+          });
+      });
+  }
+  
+  window.selectedDevice = null;
+
+  // Host Info Polling
+  window.pollHostInfo = function() {
+      fetch('/api/get_host_info')
+      .then(res => res.json())
+      .then(data => {
+          // Update Hostname
+          const hostLabel = document.getElementById('hostNameDisplay');
+          if(hostLabel) hostLabel.textContent = `Host: ${data.hostname}`;
+          
+          // Update Devices List
+          const listDiv = document.getElementById('connectedDevicesList');
+          if(data.devices.length === 0) {
+              listDiv.innerHTML = '<span style="font-style:italic;">No active connections yet.</span>';
+              return;
+          }
+          
+          let html = '<ul style="list-style:none; padding:0; margin:0;">';
+          data.devices.forEach(d => {
+               // Styling for selection
+               const isActive = window.selectedDevice === d.name;
+               const bg = isActive ? '#e0f2fe' : 'transparent';
+               const border = isActive ? '#0284c7' : 'transparent';
+               const pendingBadge = d.has_pending ? '<span style="width:8px; height:8px; background:#ef4444; border-radius:50%; display:inline-block; margin-left:5px;"></span>' : '';
+              
+              html += `
+                <li onclick="selectDevice('${d.name}')" style="display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:6px 8px; cursor:pointer; background:${bg}; border-left:3px solid ${border}; transition: background 0.2s;">
+                    <span>
+                        <span style="font-weight:600; color:#334155;">${d.name}</span>
+                        ${pendingBadge} 
+                        <span style="font-size:0.75rem; color:#94a3b8;">(${d.ip})</span>
+                    </span>
+                    <span class="badge" style="background:#f1f5f9; color:#475569;">${d.pushes} pushes</span>
+                </li>
+              `;
+          });
+          html += '</ul>';
+          listDiv.innerHTML = html;
+      })
+      .catch(err => console.log("Host poll error", err));
+  }
+
+  window.selectDevice = function(name) {
+      window.selectedDevice = name;
+      pollHostInfo(); // Re-render to show highlight
+      checkIncoming(name); // Load data
+  }
+
+  // Guest & Host Actions
+  window.getHostUrl = function() {
+        const hostInput = document.getElementById('hostIpInput');
+        let url = hostInput.value.trim();
+        if (!url) return null;
+        
+        // Auto-add protocol
+        if (!url.startsWith('http')) url = 'http://' + url;
+        
+        // Auto-add port 5000 if simplified IP is used and no port specified
+        // Logic: if it ends with a digit and doesn't have a colon in the last 6 chars
+        const chk = url.split('://')[1] || url;
+        if (!chk.includes(':')) {
+            url = url + ':5000';
+        }
+
+        return url;
+  }
+  
+  // -- Network Scanner --
+  window.findHostServer = function() {
+      const btn = document.getElementById('findHostBtn');
+      const statusInfo = document.getElementById('scanStatus');
+      const hostInput = document.getElementById('hostIpInput');
+      
+      // Determine Subnet from current location if possible, or common defaults
+      // If we are served from x.x.x.x, likely host is on that subnet.
+      // But P2P often means we are localhost, and host is 192.168.1.x
+      // We'll try to guess based on user input or common patterns.
+      
+      // Since JS cannot easily get local IP, we scan common subnets:
+      // 192.168.1.x, 192.168.0.x, 192.168.100.x
+      // Better: Ask user for "Base" or just scan 192.168.1.1-255 first.
+      
+      // Let's assume standard 192.168.1.x for now as it's most common
+      let base = "192.168.1";
+      
+      // If user typed something, use that as base
+      const existing = hostInput.value.trim();
+      if(existing && existing.length > 7) {
+          const parts = existing.split('.');
+          if (parts.length >= 3) base = `${parts[0]}.${parts[1]}.${parts[2]}`;
+      }
+      
+      btn.disabled = true;
+      statusInfo.style.display = 'block';
+      statusInfo.innerHTML = `Scanning ${base}.x ... <span class="spinner" style="width:12px; height:12px;"></span>`;
+      
+      let found = false;
+      let activeScans = 0;
+      const timeoutVal = 1500;
+      
+      for(let i=1; i<255; i++) {
+          if(found) break;
+          const targetIp = `${base}.${i}`;
+          const targetUrl = `http://${targetIp}:5000/api/get_host_info`;
+          
+          activeScans++;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), timeoutVal);
+          
+          fetch(targetUrl, { signal: controller.signal })
+          .then(res => {
+              if(res.ok) return res.json();
+              throw new Error("Not host");
+          })
+          .then(data => {
+              if(data.hostname && !found) {
+                  found = true;
+                  hostInput.value = targetIp; // Autofill just IP
+                  statusInfo.innerHTML = `✅ Found: ${data.hostname} (${targetIp})`;
+                  statusInfo.style.color = 'var(--success)';
+                  showToast(`Found Server: ${data.hostname}`);
+                  btn.disabled = false;
+              }
+          })
+          .catch(() => {
+              // Ignore timeouts/errors
+          })
+          .finally(() => {
+             activeScans--;
+             if(activeScans === 0 && !found) {
+                 btn.disabled = false;
+                 statusInfo.innerHTML = `❌ No server found on ${base}.x range. Try entering IP manually.`;
+                 statusInfo.style.color = 'var(--danger)';
+             }
+          });
+      }
+  }
+
+  // fetchFromHost remains same...
+
+  window.pushToHost = function() {
+          const host = window.getHostUrl();
+          const statusDiv = document.getElementById('connectionStatus');
+          const myName = document.getElementById('myDeviceName').value || "Guest Device";
+          
+          if (!host) { showToast("Please enter Host IP", "error"); return; }
+          
+          statusDiv.style.display = 'block';
+          statusDiv.innerHTML = '<span class="spinner"></span> Packaging local data...';
+          
+          fetch('/api/get_all_data')
+          .then(res => res.json())
+          .then(local => {
+              statusDiv.innerHTML = `Sending ${local.data.length} records to Host (${host})...`;
+              return fetch(`${host}/api/stage_incoming`, {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ 
+                      data: local.data, 
+                      deleted: local.deleted,
+                      device_name: myName
+                  }) 
+              });
+          })
+          .then(res => res.json())
+          .then(res => {
+              if (res.success) {
+                  showToast("Sent to Host for Review!");
+                  statusDiv.innerHTML = '✅ Sent! Ask Host to review.';
+              } else { throw new Error(res.message); }
+          })
+          .catch(err => {
+             console.error(err);
+             let msg = "Connection Failed";
+             if(err.message.includes("Failed to fetch")) msg = "Could not connect to Host. Check IP & Port.";
+             statusDiv.innerHTML = `❌ ${msg}`;
+             showToast(msg, "error");
+          });
+  }
+
+  window.acceptSelected = function() {
+          if(!window.selectedDevice) { showToast("No device selected", "error"); return; }
+          
+          const checks = document.querySelectorAll('.sync-check:checked');
+          const indices = Array.from(checks).map(c => parseInt(c.value));
+          
+          fetch('/api/commit_staged', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ 
+                  indices: indices,
+                  device: window.selectedDevice
+              })
+          })
+          .then(res => res.json())
+          .then(data => {
+               if(data.success) {
+                  showToast(`Merged ${data.count} records!`);
+                  // Refresh the view - should now be empty or updated
+                  checkIncoming(window.selectedDevice);
+                  // Optional: prompt reload if needed
+                  setTimeout(() => location.reload(), 1500);
+               } else {
+                   showToast("Error: " + data.message, "error");
+               }
+          })
   }
 
 });
