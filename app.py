@@ -480,85 +480,101 @@ def get_staged_data():
 def commit_staged():
     global DEVICE_STAGING
     try:
-        target_device = request.json.get("device")
-        selected_indices = request.json.get("indices", [])
+        req = request.json
+        commits_map = req.get("commits_by_device")
         
-        if not target_device or target_device not in DEVICE_STAGING:
-             return jsonify(success=False, message="Invalid session"), 400
+        # Backward compatibility / Single device mode
+        if not commits_map:
+            target = req.get("device")
+            idxs = req.get("indices", [])
+            if target: commits_map = {target: idxs}
+            else: return jsonify(success=False, message="No data provided"), 400
 
-        current_stage = DEVICE_STAGING[target_device]
-        staged_data = current_stage.get("data", [])
-        staged_deleted = current_stage.get("deleted", [])
+        total_merged = 0
         
-        # Reconstruct View List
-        view_list = []
-        for i, p in enumerate(staged_data):
-            view_list.append({"type": "record", "idx": i, "data": p})
-        for i, uid in enumerate(staged_deleted):
-            p_active = Patient.query.filter_by(uid=uid).first()
-            if p_active:
-                view_list.append({"type": "deletion", "idx": i, "uid": uid})
-        
-        count = 0
-        for ui_idx in selected_indices:
-            if ui_idx < 0 or ui_idx >= len(view_list): continue
+        for d_name, indices in commits_map.items():
+            if d_name not in DEVICE_STAGING: continue
             
-            item = view_list[ui_idx]
+            stage = DEVICE_STAGING[d_name]
+            # Retrieve validation arrays
+            current_data = stage.get("data", [])
+            current_deleted = stage.get("deleted", [])
             
-            if item["type"] == "deletion":
-                uid = item["uid"]
-                p = Patient.query.filter_by(uid=uid).first()
-                if p:
-                    db.session.delete(p)
-                    if not DeletedRecord.query.filter_by(uid=uid).first():
-                        db.session.add(DeletedRecord(uid=uid))
-                count += 1
+            num_data = len(current_data)
             
-            elif item["type"] == "record":
-                p_in = item["data"]
-                in_uid = p_in.get("uid")
-                existing = None
-                if in_uid: existing = Patient.query.filter_by(uid=in_uid).first()
-                if not existing: existing = Patient.query.filter_by(name=p_in["name"]).first()
-                
-                if existing:
-                    existing.name = p_in["name"]; existing.age = p_in["age"]; existing.address = p_in["address"]
-                    existing.regime = p_in["regime"]; existing.remark = p_in["remark"]
-                    Event.query.filter_by(patient_id=existing.id).delete()
-                    for e_in in p_in["events"]:
-                        db.session.add(Event(
-                            title=e_in["title"], start=e_in["start"], original_start=e_in["original_start"],
-                            color=e_in["color"], missed_days=e_in["missed_days"], remark=e_in["remark"], outcome=e_in["outcome"],
-                            patient_id=existing.id
-                        ))
+            # Identify what to commit based on indices
+            # Indices: 0..N-1 (records), N..M (deletions)
+            indices = set([int(x) for x in indices])
+            
+            data_indices_to_commit = []
+            del_indices_to_commit = []
+            
+            for i in indices:
+                if i < num_data:
+                    data_indices_to_commit.append(i)
                 else:
-                    new_p = Patient(
-                        uid=in_uid if in_uid else str(uuid.uuid4()),
+                    del_indices_to_commit.append(i - num_data)
+            
+            # Application Logic: Records
+            for i in data_indices_to_commit:
+                if i >= len(current_data): continue
+                p_in = current_data[i]
+                
+                exists = None
+                if p_in.get("uid"): exists = Patient.query.filter_by(uid=p_in.get("uid")).first()
+                if not exists: exists = Patient.query.filter_by(name=p_in["name"]).first()
+                
+                if exists:
+                    exists.age = p_in["age"]
+                    exists.sex = p_in["sex"]
+                    exists.address = p_in["address"]
+                    exists.regime = p_in["regime"]
+                    exists.remark = p_in["remark"]
+                    Event.query.filter_by(patient_id=exists.id).delete()
+                else:
+                    exists = Patient(
+                        uid=p_in.get("uid") or str(uuid.uuid4()),
                         name=p_in["name"], age=p_in["age"], sex=p_in["sex"],
                         address=p_in["address"], regime=p_in["regime"], remark=p_in["remark"]
                     )
-                    db.session.add(new_p)
+                    db.session.add(exists)
                     db.session.flush()
-                    for e_in in p_in["events"]:
-                        db.session.add(Event(
-                            title=e_in["title"], start=e_in["start"], original_start=e_in["original_start"],
-                            color=e_in["color"], missed_days=e_in["missed_days"], remark=e_in["remark"], outcome=e_in["outcome"],
-                            patient_id=new_p.id
-                        ))
-                count += 1
 
-        db.session.commit()
-        
-        # Cleanup: Remove committed items? 
-        # For simplicity, if we commit, we assume session is done or keep it for refresh.
-        # Let's clear the device staging to avoid double commit.
-        del DEVICE_STAGING[target_device]
-        
-        return jsonify(success=True, count=count)
-    except Exception as e:
-        return jsonify(success=False, message=str(e)), 500
+                for e_in in p_in["events"]:
+                    db.session.add(Event(
+                        title=e_in["title"], start=e_in["start"], original_start=e_in["original_start"],
+                        color=e_in["color"], missed_days=e_in["missed_days"],
+                        remark=e_in["remark"], outcome=e_in["outcome"],
+                        patient_id=exists.id
+                    ))
+                total_merged += 1
+
+            # Application Logic: Deletions
+            for i in del_indices_to_commit:
+                if i >= len(current_deleted): continue
+                d_uid = current_deleted[i]
+                p = Patient.query.filter_by(uid=d_uid).first()
+                if p: db.session.delete(p)
+                if not DeletedRecord.query.filter_by(uid=d_uid).first():
+                    db.session.add(DeletedRecord(uid=d_uid))
+                total_merged += 1
+            
+            db.session.commit()
+
+            # Cleanup Staged Data (Remove committed items)
+            # Iterate in reverse to avoid index shifting
+            for i in sorted(data_indices_to_commit, reverse=True):
+                if i < len(current_data): current_data.pop(i)
+            
+            for i in sorted(del_indices_to_commit, reverse=True):
+                if i < len(current_deleted): current_deleted.pop(i)
+                
+            DEVICE_STAGING[d_name]["timestamp"] = datetime.now()
+
+        return jsonify(success=True, count=total_merged)
 
     except Exception as e:
+        print(e)
         return jsonify(success=False, message=str(e)), 500
 
 # ---- CORS ----

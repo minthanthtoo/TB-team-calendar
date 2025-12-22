@@ -602,9 +602,7 @@ document.addEventListener('DOMContentLoaded', function() {
           const container = document.getElementById('reviewContainer');
           const btn = document.getElementById('checkUpdatesBtn');
           
-          // Default to current selection if not passed
           if(!deviceName) deviceName = window.selectedDevice || 'all';
-          
           const displayTitle = deviceName === 'all' ? 'All Devices' : deviceName;
           
           if(btn) btn.innerHTML = '🔄 Checking... <span class="spinner"></span>';
@@ -678,18 +676,15 @@ document.addEventListener('DOMContentLoaded', function() {
                   }
 
                   const uidShort = p.uid ? `<span style="font-family:monospace; font-size:0.65rem; color:#94a3b8; margin-left:4px;">#${p.uid.slice(0,4)}</span>` : '';
-                  // Safe processing of source_device
                   const devName = p.source_device || deviceName;
                   const deviceBadge = `<span style="background:#e2e8f0; color:#475569; padding:2px 4px; border-radius:4px; font-size:0.65rem; margin-right:6px;">${devName}</span>`;
 
-                  // Store device & original index in value for backend reconstruction
-                  // If aggregated, p.source_device and p.idx should exist. If not (legacy), use current.
                   const valObj = { d: p.source_device || deviceName, i: (p.idx !== undefined ? p.idx : idx) };
                   const val = encodeURIComponent(JSON.stringify(valObj));
 
                   html += `
                     <div style="padding: 4px 8px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; ${style}">
-                        <input type="checkbox" class="sync-check" value="${val}" data-status="${p.status}" ${checked}> 
+                        <input type="checkbox" class="sync-check" value="${val}" data-status="${p.status}" ${checked} onchange="updateMergeCount()"> 
                         <span style="margin-left: 8px; font-size:0.9rem;">${p.name}</span>
                         ${deviceBadge}
                         ${uidShort}
@@ -698,15 +693,22 @@ document.addEventListener('DOMContentLoaded', function() {
                   `;
               });
               html += '</div>';
-              html += `<button class="btn" style="width:100%;" onclick="acceptSelected()">Merge Selected (${totalItems})</button>`;
+              html += `<button id="mergeBtn" class="btn" style="width:100%;" onclick="acceptSelected()">Merge Selected (${totalItems})</button>`;
               
               container.innerHTML = html;
+              updateMergeCount(); // Initialize count
           })
           .catch(err => {
               console.error("CheckIncoming Error:", err);
               container.innerHTML = `<div style="color:var(--danger); padding:10px;">❌ Error fetching updates: ${err.message}</div>`;
               if(btn) btn.innerHTML = '🔄 Retry List';
           });
+  }
+
+  window.updateMergeCount = function() {
+      const checks = document.querySelectorAll('.sync-check:checked');
+      const btn = document.getElementById('mergeBtn');
+      if(btn) btn.textContent = `Merge Selected (${checks.length})`;
   }
 
   window.acceptSelected = function() {
@@ -745,3 +747,9 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
 });
+
+window.updateMergeCount = function() {
+    const checks = document.querySelectorAll('.sync-check:checked');
+    const btn = document.getElementById('mergeBtn');
+    if(btn) btn.textContent = `Merge Selected (${checks.length})`;
+}

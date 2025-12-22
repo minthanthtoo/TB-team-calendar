@@ -40,7 +40,8 @@ self.addEventListener('fetch', (event) => {
   const isApi = event.request.url.includes('/events') || 
                 event.request.url.includes('/add_patient') || 
                 event.request.url.includes('/delete_patient') ||
-                event.request.url.includes('/update_event');
+                event.request.url.includes('/update_event') ||
+                event.request.url.includes('/api/');
 
   if (isApi) {
     // API: Network only (for now, until we add IndexDB sync)
