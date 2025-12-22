@@ -33,6 +33,7 @@ source venv/bin/activate  # macOS/Linux
 pip install -r requirements.txt
 python app.py
 ```
+- **IMPORTANT**: You must run this via `python app.py`. Do not open `index.html` directly or use "Live Server" (port 5500), as the Jinja2 templates `{{ url_for... }}` require the Flask backend to render.
 - Open http://127.0.0.1:5000 in your browser.
 
 ## Deployment

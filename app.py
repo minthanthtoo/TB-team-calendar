@@ -168,14 +168,64 @@ def update_event():
             return jsonify(success=False, message="Invalid outcome for this milestone"), 400
 
         # Update fields
+        old_missed_days = ev.missed_days
         ev.missed_days = missed_days
         ev.remark = remark
         ev.outcome = outcome
 
-        # Shift date from original_start + missed_days
-        original_start = datetime.strptime(ev.original_start, "%Y-%m-%d")
-        new_start = original_start + timedelta(days=missed_days)
-        ev.start = new_start.strftime("%Y-%m-%d")
+        # Calculate shift delta
+        delta_days = missed_days - old_missed_days
+        
+        # Shift CURRENT event
+        # Logic: We treat 'missed_days' on this event as adding to the delay.
+        # But wait, the existing code says: new_start = original_start + missed_days
+        # This implies 'missed_days' is the TOTAL offset for this event? 
+        # No, usually in these apps, you report "5 days missed during this period".
+        # If the user enters "5" in the input, they mean "Total 5 days missed for this specific event milestone".
+        # So we update this event's date based on its original start.
+        
+        current_original_start = datetime.strptime(ev.original_start, "%Y-%m-%d")
+        new_start_date = current_original_start + timedelta(days=missed_days)
+        
+        # ACTUALLY, checking previous code: 
+        # new_start = original_start + timedelta(days=missed_days)
+        # This means 'missed_days' is indeed treated as the offset from original.
+        # But if we want RIPPLE effect, checking "5" here should push EVERYTHING else by the difference.
+        
+        # So if I change missed_days from 0 to 5 (delta +5):
+        # This event moves +5 days.
+        # ALL FUTURE events should also move +5 days from their CURRENT position.
+        
+        ev.start = new_start_date.strftime("%Y-%m-%d")
+
+        if delta_days != 0:
+            # Find all future events for this patient
+            # We assume 'future' means original_start is after this event's original_start
+            future_events = Event.query.filter(
+                Event.patient_id == ev.patient_id,
+                Event.original_start > ev.original_start
+            ).all()
+
+            for fev in future_events:
+                # Shift their CURRENT start date by delta
+                # We do NOT update their 'missed_days' (that belongs to them localy), 
+                # we just shift their schedule.
+                # But wait, if we only update 'start', and later someone edits that event, 
+                # the code `new_start = original_start + missed_days` would RESET this shift!
+                
+                # PROBLEM: The current logic relies on `original_start + missed_days`.
+                # If we want a permanent shift, we must update `original_start` of future events?
+                # YES. If the schedule slips, the "baseline" for future events has effectively changed.
+                
+                fev_current_start = datetime.strptime(fev.start, "%Y-%m-%d")
+                fev_new_start = fev_current_start + timedelta(days=delta_days)
+                fev.start = fev_new_start.strftime("%Y-%m-%d")
+                
+                # Crucial: We must also update original_start so the shift persists 
+                # if the user later edits that future event.
+                fev_original = datetime.strptime(fev.original_start, "%Y-%m-%d")
+                fev_new_original = fev_original + timedelta(days=delta_days)
+                fev.original_start = fev_new_original.strftime("%Y-%m-%d")
 
         db.session.commit()
         return jsonify(success=True)

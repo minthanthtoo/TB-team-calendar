@@ -2,96 +2,187 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Team Cycle Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TB Team Cycle Tracker</title>
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.css" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <h2>Team Cycle Tracker</h2>
 
-<!-- Collapsible Patient Form -->
-<button id="toggleFormBtn" class="toggle-btn">Add New Patient ▾</button>
+  <header>
+    <h1>
+      <span style="font-size: 1.5rem; margin-right: 0.5rem;">🏥</span> 
+      TB Team Cycle Tracker
+    </h1>
+    <div style="font-size: 0.85rem; color: #475569; font-weight: 500;">
+      <span id="headerCount">{{ patients|length }}</span> PatientRecords
+    </div>
+  </header>
 
-<form id="patientForm" method="POST" action="/add_patient" >
-  <h3>Add Patient</h3>
-  <div class="form-row">
-    <div class="form-group">
-      <label for="name">Name</label>
-      <input type="text" id="name" name="name" required>
+  <div class="container">
+    
+    <!-- Dashboard Summary -->
+    <div class="dashboard-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Patients</div>
+        <div class="stat-value" id="totalCount">{{ patients|length }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active Treatment</div>
+        <div class="stat-value" id="activeCount">
+          {% set active_count = 0 %}
+          {% for p in patients %}
+             {% set active_count = active_count + 1 %} 
+          {% endfor %}
+          {{ active_count }}
+        </div>
+      </div>
+      <div class="stat-card" style="border-left-color: var(--success);">
+        <div class="stat-label">Outcomes (Cured)</div>
+        <div class="stat-value">0</div>
+      </div>
     </div>
-    <div class="form-group">
-      <label for="age">Age</label>
-      <input type="number" id="age" name="age" required>
+
+    <!-- Collapsible Patient Form -->
+    <div class="card" style="padding: 0; overflow: hidden; border: none; background: transparent; box-shadow: none;">
+      <button id="toggleFormBtn" class="btn toggle-btn">
+        <span><span style="margin-right:8px;">+</span> Add New Patient</span>
+        <span class="icon-toggle">▼</span>
+      </button>
+
+      <form id="patientForm" method="POST" action="/add_patient" class="card" style="margin-top: 10px;">
+        <h3 style="color: var(--primary);">New Patient Enrollment</h3>
+        
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="name">Full Name</label>
+            <input type="text" id="name" name="name" placeholder="e.g. U Ba" required>
+          </div>
+          <div class="form-group">
+            <label for="age">Age</label>
+            <input type="number" id="age" name="age" placeholder="45" required>
+          </div>
+          <div class="form-group">
+            <label for="sex">Sex</label>
+            <select id="sex" name="sex">
+              <option>Male</option>
+              <option>Female</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="address">Address / Contact</label>
+            <input type="text" id="address" name="address" placeholder="Village / Phone">
+          </div>
+          <div class="form-group">
+            <label for="regime">Treatment Regime</label>
+            <select id="regime" name="regime">
+              <option value="IR">IR (Intensive Phase)</option>
+              <option value="CR">CR (Continuation Phase)</option>
+              <option value="RR">RR (Retreatment)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Cycle Timeline</label>
+            <div id="milestonesPreview" style="padding: 0.6rem; background: #f1f5f9; color: #475569; border-radius: 6px; font-size: 0.85rem;">Loading...</div>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="start_date">Provisional Start Date</label>
+            <input type="date" id="start_date" name="start_date" required>
+          </div>
+          <div class="form-group" style="flex: 2;">
+            <label for="remark">Clinical Notes</label>
+            <input type="text" id="remark" name="remark" placeholder="History, comorbidities...">
+          </div>
+        </div>
+
+        <div style="text-align: right; margin-top: 1rem; border-top: 1px solid #e2e8f0; padding-top: 1rem;">
+          <button type="submit" class="btn">Confirm Enrollment</button>
+        </div>
+      </form>
     </div>
-    <div class="form-group">
-      <label for="sex">Sex</label>
-      <select id="sex" name="sex">
-        <option>Male</option>
-        <option>Female</option>
-      </select>
+
+    <!-- MAIN LAYOUT (Calendar + Sidebar) -->
+    <div class="main-layout">
+      <!-- Calendar Section -->
+      <div id="calendar-container">
+        <div id="calendar"></div>
+      </div>
+
+      <!-- Legend / Patient Registry Sidebar -->
+      <div class="card" id="legend">
+        <h4 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+          Patient Registry
+        </h4>
+        <ul>
+          {% for p in patients %}
+            {% if p.events %}
+              <li class="patient-item" style="border-left-color: {{ p.events[0].color }}">
+                <div style="display: flex; flex-direction: column;">
+                  <strong style="font-size: 0.95rem;">{{ p.name }}</strong> 
+                  <span style="color: #475569; font-size: 0.8rem;">Age: {{ p.age }} • {{ p.sex }} • {{ p.regime }}</span>
+                </div>
+                 <div style="margin-top: 5px;">
+                   <button class="deletePatientBtn btn btn-secondary" data-id="{{ p.id }}" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; border-color: transparent; color: #475569; background: #f1f5f9;">
+                      ✕ Remove
+                   </button>
+                 </div>
+              </li>
+            {% endif %}
+          {% endfor %}
+        </ul>
+        {% if not patients %}
+          <div style="text-align: center; padding: 2rem; color: #475569;">
+            <div style="font-size: 2rem; margin-bottom: 0.5rem;">📭</div>
+            No patients currently enrolled.
+          </div>
+        {% endif %}
+      </div>
+    </div> <!-- End Main Layout -->
+
+  </div> <!-- End Container -->
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <!-- Event Modal (Dialog) -->
+  <div id="eventModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h4 id="modalTitle">Milestone Details</h4>
+        <button id="closeModal" class="close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="modalDetails"></div>
+        <!-- Dynamic Content injected by JS -->
+      </div>
     </div>
   </div>
 
-  <div class="form-row">
-    <div class="form-group">
-      <label for="address">Address</label>
-      <input type="text" id="address" name="address">
+  <!-- Delete Confirmation Modal -->
+  <div id="confirmDeleteModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 400px; text-align: center; padding-bottom: 2rem;">
+      <div class="modal-body">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
+        <h3 style="color: var(--danger); margin-bottom: 0.5rem;">Remove Patient?</h3>
+        <p style="color: var(--text-muted); margin-bottom: 2rem;">
+          Are you sure you want to delete <strong id="deletePatientName" style="color: var(--text-main);"></strong>? 
+          <br>This action cannot be undone.
+        </p>
+        <div style="display: flex; justify-content: center; gap: 1rem;">
+          <button id="cancelDeleteBtn" class="btn btn-secondary">Cancel</button>
+          <button id="confirmDeleteBtn" class="btn" style="background-color: var(--danger);">Yes, Delete</button>
+        </div>
+      </div>
     </div>
-    <div class="form-group">
-      <label for="regime">Regime</label>
-      <select id="regime" name="regime">
-        <option>IR</option>
-        <option>CR</option>
-        <option>RR</option>
-      </select>
-    </div>
-<div class="form-group">
-  <label>Milestones:</label>
-  <div id="milestonesPreview" style="font-weight:bold; color:#555">-</div>
-</div>
-    <div class="form-group">
-      <label for="remark">Remark</label>
-      <input type="text" id="remark" name="remark">
-    </div>
-  </div>
-
-  <div class="form-row">
-    <div class="form-group">
-      <label for="start_date">Start Date</label>
-      <input type="date" id="start_date" name="start_date" required>
-    </div>
-    <!-- div class="form-group">
-      <label for="missed_days">Missed Days</label>
-      <input type="number" id="missed_days" name="missed_days" value="0" class="missed-days">
-    </div-->
-  </div>
-
-  <button type="submit">Add Patient Cycle</button>
-</form>
-
-  <!-- Calendar -->
-  <div id="calendar"></div>
-
-<!-- Legend -->
-<div id="legend">
-  <h4>Patient Colors</h4>
-  <ul>
-    {% for p in patients %}
-      {% if p.events %}
-        <li style="color: {{ p.events[0].color }}">
-          <strong>{{ p.name }}</strong>, Age: {{ p.age }}, Sex: {{ p.sex }}, Regime: {{ p.regime }}
-          <button class="deletePatientBtn" data-id="{{ p.id }}" style="margin-left:10px; padding:2px 6px; font-size:12px; border-radius:4px; cursor:pointer;">Delete</button>
-        </li>
-      {% endif %}
-    {% endfor %}
-  </ul>
-</div>
-
-  <!-- Event Modal -->
-  <div id="eventModal">
-    <span id="closeModal">&times;</span>
-    <h4 id="modalTitle"></h4>
-    <p id="modalDetails"></p>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.js"></script>
