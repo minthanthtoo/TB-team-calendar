@@ -99,13 +99,33 @@ def index():
 
 @app.route("/events")
 def events():
-    events = Event.query.all()
+    team_slug = request.args.get('team')
+    requester_device = request.headers.get('X-Device-ID')
+    
+    if team_slug and team_slug != 'ALL' and team_slug != 'DEFAULT':
+        # Security Check: Must be APPROVED member of this team
+        if not requester_device:
+            return jsonify(error="Device ID required"), 403
+            
+        membership = TeamMember.query.filter_by(
+            team_slug=team_slug, 
+            device_id=requester_device, 
+            status='APPROVED'
+        ).first()
+        
+        if not membership:
+             return jsonify(error="Unauthorized: Not an approved member"), 403
+
+        events = Event.query.join(Patient).filter(Patient.team_id == team_slug).all()
+    else:
+        events = Event.query.all()
+        
     return jsonify([{
-        "id": e.id,  # <-- add this line
-        "title": f"{e.patient.name} - {e.title}",  # <-- include patient name
+        "id": e.id,
+        "title": f"{e.patient.name} - {e.title}",
         "start": e.start,
         "color": e.color,
-        "extendedProps": {  # per FullCalendar docs
+        "extendedProps": {
             "patient": {
                 "name": e.patient.name,
                 "age": e.patient.age,

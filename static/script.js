@@ -2,22 +2,28 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // -- Toast Notification System --
   // -- Toast Notification System --
-  window.showToast = function(message, type = 'success') {
+  window.showToast = showToast;
+  function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
+    
+    let icon = '✓';
+    if(type === 'error') icon = '⚠️';
+    if(type === 'info') icon = 'ℹ️';
+
     toast.innerHTML = `
-      <span>${type === 'success' ? '✓' : '⚠'}</span>
+      <span>${icon}</span>
       <span>${message}</span>
     `;
     container.appendChild(toast);
 
-    // Remove after 3 seconds
+    // Remove after 4 seconds for better readability
     setTimeout(() => {
       toast.style.opacity = '0';
-      toast.style.transform = 'translateY(10px)';
+      toast.style.transform = 'translateY(-10px)';
       setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, 4000);
   }
 
   // -- Network Status --
@@ -65,7 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const MM_CAL_OFFSET = -1; 
 
   // Initialize Calendar
-  var calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
+  window.calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
     initialView: initialViewType,
     headerToolbar: {
       left: isMobile ? 'prev,next' : 'prev,next today',
@@ -75,7 +81,27 @@ document.addEventListener('DOMContentLoaded', function() {
     titleFormat: { year: 'numeric', month: isMobile ? 'short' : 'long' },
     height: 'auto', // Adjust height automatically
     themeSystem: 'standard', // we use our own CSS overrides
-    events: '/events',
+    events: function(fetchInfo, successCallback, failureCallback) {
+        const team = localStorage.getItem('tb_team_slug') || '';
+        const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+        let url = `/events?team=${team}&start=${fetchInfo.startStr}&end=${fetchInfo.endStr}`;
+        
+        fetch(url, {
+            headers: { 'X-Device-ID': deviceId }
+        })
+        .then(res => {
+            if(res.status === 403) {
+                showToast("Calendar access denied.", "error");
+                return [];
+            }
+            return res.json();
+        })
+        .then(data => successCallback(data))
+        .catch(err => {
+            console.error("Calendar fetch error:", err);
+            failureCallback(err);
+        });
+    },
     dayCellDidMount: function(info) {
         // Highlight Sabbath Days
         const d = info.date;
@@ -301,7 +327,10 @@ document.addEventListener('DOMContentLoaded', function() {
             outcome: outcome
           })
         })
-        .then(res => res.json())
+        .then(res => {
+          if(!res.ok) throw new Error("Server error updating event");
+          return res.json();
+        })
         .then(data => {
           if (data.success) {
             showToast('Event updated successfully!', 'success');
@@ -311,24 +340,21 @@ document.addEventListener('DOMContentLoaded', function() {
             // Checks if Patient Detail Modal is open, if so, refresh it
             const detailModal = document.getElementById('patientDetailModal');
             if(detailModal && detailModal.style.display !== 'none' && patient.uid) {
-                 // Re-fetch all data to get latest state, then update detail view
-                 // Optimization: openPatientDetail(uid) triggers fetch in current implementation?
-                 // Current openPatientDetail uses window.allPatientData. We need to refresh window.allPatientData first.
-                 // So we should call a data refresh then re-open.
-                 refreshPatientDataAndUI(patient.uid);
+                  refreshPatientDataAndUI(patient.uid);
             }
             if(window.updateRegistryStatus) window.updateRegistryStatus();
 
           } else {
-            showToast('Failed to update event: ' + data.message, 'error');
+            showToast('Failed to update: ' + (data.message || "Unknown error"), 'error');
             btn.disabled = false;
             btn.innerText = "Save Changes";
           }
         })
         .catch(err => {
           console.error(err);
-          showToast('Network error occurred', 'error');
+          showToast('Network error: ' + err.message, 'error');
           btn.disabled = false;
+          btn.innerText = "Save Changes";
         });
       }
   }
@@ -435,9 +461,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
               if(targetUid) window.openPatientDetail(targetUid);
               window.renderPatientList(); // Refresh list/badges too
+              
+              // Also sync Team List & Dashboard counts during background sync
+              window.loadTeams();
+              if(window.updateDashboardCounts) window.updateDashboardCounts();
+              if(window.calendar) window.calendar.refetchEvents();
           }
       })
-      .catch(err => console.error("Fetch error:", err));
+      .catch(err => {
+          console.error("Sync Error:", err);
+          showToast("Sync Interrupted", "error");
+      });
   }
 
   // -- Modal Close Logic --
@@ -516,12 +550,14 @@ document.addEventListener('DOMContentLoaded', function() {
         btn.disabled = true;
 
         fetch(`/delete_patient/${patientIdToDelete}`, { method: 'POST' })
-        .then(res => res.json())
+        .then(res => {
+            if(!res.ok) throw new Error("Deletion failed");
+            return res.json();
+        })
         .then(data => {
             if (data.success) {
                 showToast("Patient removed successfully");
                 
-                // 1. Remove from List UI
                 const li = document.querySelector(`.deletePatientBtn[data-id="${patientIdToDelete}"]`).closest('li');
                 if (li) {
                     li.style.transition = 'all 0.3s ease';
@@ -529,7 +565,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     li.style.transform = 'translateX(20px)';
                     setTimeout(() => {
                         li.remove();
-                        // Handle empty state
                         const list = document.querySelector('#legend ul');
                         if (list && list.children.length === 0) {
                            list.innerHTML = '<div style="text-align: center; padding: 2rem; color: #475569;"><div style="font-size: 2rem; margin-bottom: 0.5rem;">📭</div>No patients currently enrolled.</div>';
@@ -537,27 +572,31 @@ document.addEventListener('DOMContentLoaded', function() {
                     }, 300);
                 }
 
-                // 2. Update Counts
                 const ids = ['headerCount', 'totalCount', 'activeCount'];
                 ids.forEach(id => {
                     const el = document.getElementById(id);
                     if (el) {
                         let val = parseInt(el.innerText || '0');
-                        el.innerText = Math.max(0, val - 1); // Prevent negative
+                        el.innerText = Math.max(0, val - 1);
                     }
                 });
 
-                // 3. Refresh Calendar
                 calendar.refetchEvents();
+                
+                // Reset button and dismiss
+                btn.innerText = originalText;
+                btn.disabled = false;
+                document.getElementById('confirmDeleteModal').style.display = 'none';
+                patientIdToDelete = null;
 
             } else {
-                showToast("Error: " + data.message, 'error');
+                showToast("Error: " + (data.message || "Could not delete"), "error");
                 btn.innerText = originalText;
                 btn.disabled = false;
             }
         })
         .catch(err => {
-            showToast("Network error", 'error');
+            showToast("Network Error: " + err.message, "error");
             btn.innerText = originalText;
             btn.disabled = false;
         });
@@ -802,9 +841,16 @@ document.addEventListener('DOMContentLoaded', function() {
       statusDiv.style.display = 'block';
       statusDiv.innerHTML = `<span class="spinner"></span> Fetching from ${host}...`;
       
+      const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+      
       // We are fetching ALL data from host
-      fetch(`${host}/api/get_all_data`)
-      .then(res => res.json())
+      fetch(`${host}/api/get_all_data`, {
+          headers: { 'X-Device-ID': deviceId }
+      })
+      .then(res => {
+          if(res.status === 403) throw new Error("Host Sync Forbidden");
+          return res.json();
+      })
       .then(data => {
           if (!data.success) throw new Error(data.message || "Host Error");
           
@@ -852,8 +898,15 @@ document.addEventListener('DOMContentLoaded', function() {
           statusDiv.style.display = 'block';
           statusDiv.innerHTML = '<span class="spinner"></span> Packaging local data...';
           
-          fetch('/api/get_all_data')
-          .then(res => res.json())
+          const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+          
+          fetch('/api/get_all_data', {
+              headers: { 'X-Device-ID': deviceId }
+          })
+          .then(res => {
+              if(res.status === 403) throw new Error("Sync Access Forbidden");
+              return res.json();
+          })
           .then(local => {
               statusDiv.innerHTML = `Sending ${local.data.length} records to Host (${host})...`;
               return fetch(`${host}/api/stage_incoming`, {
@@ -1038,9 +1091,22 @@ document.addEventListener('DOMContentLoaded', function() {
 // -- Dynamic Dashboard Logic --
 window.updateDashboardCounts = function() {
     const teamSlug = localStorage.getItem('tb_team_slug') || 'DEFAULT';
-    fetch(`/api/get_all_data?team=${teamSlug}`)
-    .then(res => res.json())
+    const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+    
+    fetch(`/api/get_all_data?team=${teamSlug}`, {
+        headers: { 'X-Device-ID': deviceId }
+    })
+    .then(res => {
+        if(res.status === 403) {
+            // Silently ignore or handle 403 for dashboard background updates
+            return { success: false, access_denied: true };
+        }
+        if(!res.ok) throw new Error("Dashboard sync failed");
+        return res.json();
+    })
     .then(data => {
+        if (data.access_denied) return; // Stop if forbidden
+        
         if(data.success) {
             window.allPatientData = data.data; // Sync global store
             
@@ -1049,24 +1115,18 @@ window.updateDashboardCounts = function() {
             let cured = 0;
             
             data.data.forEach(p => {
-                // Sort events to find the true chronological last event
-                // (Safeguard against unsorted server data)
                 const sortedEvents = [...p.events].sort((a,b) => new Date(a.start) - new Date(b.start));
                 const lastEvent = sortedEvents.length > 0 ? sortedEvents[sortedEvents.length-1] : null;
                 
                 if(!lastEvent) {
-                    // No events yet = Active (just enrolled)
                     active++;
                 } else {
                     const out = (lastEvent.outcome || "").trim();
                     if(out === "") {
-                        // Ongoing = Active
                         active++;
                     } else if (out === 'Cured' || out === 'Completed') {
-                        // Cured/Completed
                         cured++;
                     }
-                    // 'Died', 'Failed', 'LTFU' are not counted in Active or Cured
                 }
             });
             
@@ -1081,7 +1141,9 @@ window.updateDashboardCounts = function() {
             if(headerEl) headerEl.innerText = total;
         }
     })
-    .catch(err => console.error("Dashboard update failed", err));
+    .catch(err => {
+        console.warn("Dashboard update suppressed during transit/error:", err.message);
+    });
 }
 
 // -- Patient List & Detail View Logic --
@@ -1098,19 +1160,38 @@ window.openPatientList = function(initialFilter = 'all') {
     document.getElementById('patientListContainer').innerHTML = '<div style="padding:20px; text-align:center;"><span class="spinner"></span> Loading...</div>';
     
     const team = localStorage.getItem('tb_team_slug') || '';
+    const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
     const url = team ? `/api/get_all_data?team=${team}` : '/api/get_all_data';
 
-    fetch(url)
-    .then(res => res.json())
+    fetch(url, {
+        headers: { 'X-Device-ID': deviceId }
+    })
+    .then(res => {
+        if(res.status === 403) {
+            showToast("Access Denied. Resetting team view.", "error");
+            localStorage.removeItem('tb_team_slug');
+            localStorage.removeItem('tb_team_name');
+            localStorage.removeItem('tb_team_invite_code');
+            updateMyTeamUI();
+            // Try again with guest view
+            setTimeout(() => window.openPatientList(initialFilter), 500);
+            return { success: false, handled: true };
+        }
+        if(!res.ok) throw new Error("Failed to load patient list");
+        return res.json();
+    })
     .then(data => {
+        if (data.handled) return;
         if(data.success) {
             window.allPatientData = data.data; // Store globally for filtering
             renderPatientList();
         } else {
+            showToast("Error: " + (data.message || "Failed to load"), "error");
             document.getElementById('patientListContainer').innerHTML = `<div style="color:red; padding:20px;">Error: ${data.message}</div>`;
         }
     })
     .catch(err => {
+        showToast("Network Error: " + err.message, "error");
         document.getElementById('patientListContainer').innerHTML = `<div style="color:red; padding:20px;">Network Error</div>`;
     });
 }
@@ -1358,7 +1439,19 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 window.updateRegistryStatus = async function() {
     try {
-        const response = await fetch('/api/get_all_data');
+        const team = localStorage.getItem('tb_team_slug') || '';
+        const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+        const url = team ? `/api/get_all_data?team=${team}` : '/api/get_all_data';
+        
+        const response = await fetch(url, {
+            headers: { 'X-Device-ID': deviceId }
+        });
+        
+        if (response.status === 403) {
+            console.warn("Registry update blocked: 403 Forbidden");
+            return;
+        }
+        
         const rData = await response.json();
         const patients = rData.data || [];
         
@@ -1529,7 +1622,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if(code.length === 7) {
                 previewDiv.innerHTML = '<span style="color:#64748b;">🔍 Looking up...</span>';
                 fetch(`/api/teams/lookup?code=${code}`)
-                .then(res => res.json())
+                .then(res => {
+                    if(!res.ok) throw new Error("Lookup failed");
+                    return res.json();
+                })
                 .then(data => {
                     if(data.success) {
                         previewDiv.innerHTML = `<span style="color:#16a34a;">✅ Found: ${data.team_name}</span>`;
@@ -1538,7 +1634,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 })
                 .catch(() => {
-                    previewDiv.innerHTML = '';
+                    previewDiv.innerHTML = '<span style="color:#dc2626;">⚠️ Error checking code</span>';
                 });
             } else {
                 previewDiv.innerHTML = '';
@@ -1568,7 +1664,10 @@ document.addEventListener('DOMContentLoaded', () => {
                   headers: {'Content-Type': 'application/json'},
                   body: JSON.stringify({ name: name, user_name: 'Admin', device_id: deviceId, is_public: isPublic })
               })
-              .then(res => res.json())
+              .then(res => {
+                  if(!res.ok) throw new Error("Failed to create team");
+                  return res.json();
+              })
               .then(data => {
                   createBtn.innerHTML = "Create Team";
                   createBtn.disabled = false;
@@ -1584,13 +1683,13 @@ document.addEventListener('DOMContentLoaded', () => {
                       updateMyTeamUI();
                       loadTeams(); // Refresh list
                   } else {
-                      showToast(data.message, "error");
+                      showToast(data.message || "Creation failed", "error");
                   }
               })
               .catch(err => {
                   createBtn.innerHTML = "Create Team";
                   createBtn.disabled = false;
-                  showToast("Connection Error", "error");
+                  showToast("Connection Error: " + err.message, "error");
               });
         };
     }
@@ -1668,7 +1767,8 @@ window.updateSidebarProgress = function() {
     });
 }
 
-window.loadTeams = function() {
+window.loadTeams = loadTeams;
+function loadTeams() {
     const listMy = document.getElementById('myTeamsList');
     const listPub = document.getElementById('publicTeamsList');
     const sortSelect = document.getElementById('teamSortSelect');
@@ -1687,7 +1787,10 @@ window.loadTeams = function() {
     fetch('/api/teams/list?tab=my-team', {
         headers: { 'X-Device-ID': deviceId }
     })
-    .then(res => res.json())
+    .then(res => {
+        if(!res.ok) throw new Error("Failed to load your teams");
+        return res.json();
+    })
     .then(data => {
         if(!data.success || !listMy) return;
         if(data.teams.length === 0) {
@@ -1732,13 +1835,19 @@ window.loadTeams = function() {
             });
             listMy.innerHTML = html;
         }
+    })
+    .catch(err => {
+        if(listMy) listMy.innerHTML = `<div style="color:#ef4444; font-size:0.8rem; text-align:center;">${err.message}</div>`;
     });
 
     // 2. Fetch Directory (Paginated & Sorted)
     fetch(`/api/teams/list?tab=directory&sort=${currentSort}&page=${currentPage}&limit=10`, {
         headers: { 'X-Device-ID': deviceId }
     })
-    .then(res => res.json())
+    .then(res => {
+        if(!res.ok) throw new Error("Failed to load directory");
+        return res.json();
+    })
     .then(data => {
         if(!data.success || !listPub) return;
         
@@ -1790,18 +1899,7 @@ window.loadTeams = function() {
     });
 }
 
-window.switchTeam = function(slug, name, inviteCode) {
-    localStorage.setItem('tb_team_slug', slug);
-    localStorage.setItem('tb_team_name', name);
-    if(inviteCode) localStorage.setItem('tb_team_invite_code', inviteCode);
-    else localStorage.removeItem('tb_team_invite_code'); // Clear if unknown
-    
-    // Reload data for this new team
-    showToast(`Switched to ${name}`);
-    updateMyTeamUI();
-    loadTeams(); // To update 'Active' button status
-    if(window.refreshPatientDataAndUI) window.refreshPatientDataAndUI();
-}
+// window.switchTeam moved to end of file with other team logic
 
 window.joinTeam = function(slug) {
     const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
@@ -1811,7 +1909,10 @@ window.joinTeam = function(slug) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ slug: slug, user_name: deviceId, device_id: deviceId })
         })
-        .then(res => res.json())
+        .then(res => {
+            if(!res.ok) throw new Error("Join request failed");
+            return res.json();
+        })
         .then(data => {
             if(data.success) {
                 if(data.status === 'APPROVED') {
@@ -1822,13 +1923,17 @@ window.joinTeam = function(slug) {
                      showToast("Request Sent! Waiting for Admin Approval.");
                 }
             } else {
-                showToast(data.message, "error");
+                showToast(data.message || "Could not join team", "error");
             }
+        })
+        .catch(err => {
+            showToast("Network Error: " + err.message, "error");
         });
     }
 }
 
-window.updateMyTeamUI = function() {
+window.updateMyTeamUI = updateMyTeamUI;
+function updateMyTeamUI() {
     const slug = localStorage.getItem('tb_team_slug');
     const name = localStorage.getItem('tb_team_name') || slug;
     
@@ -1901,7 +2006,10 @@ window.joinTeamByCode = function() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ code: code, user_name: deviceId, device_id: deviceId })
     })
-    .then(res => res.json())
+    .then(res => {
+        if(!res.ok) throw new Error("Invalid code or server error");
+        return res.json();
+    })
     .then(data => {
         if(data.success) {
              showToast("Joined! " + (data.status === 'APPROVED' ? "Access Granted." : "Waiting for Approval."));
@@ -1914,8 +2022,11 @@ window.joinTeamByCode = function() {
              updateMyTeamUI();
              loadTeams();
         } else {
-            showToast(data.message, "error");
+            showToast(data.message || "Code check failed", "error");
         }
+    })
+    .catch(err => {
+        showToast("Error: " + err.message, "error");
     });
 }
 
@@ -1929,7 +2040,10 @@ window.loadPendingMembers = function(slug) {
     if(!containerPending || !sectionPending) return;
     
     fetch(`/api/teams/members?slug=${slug}`)
-    .then(res => res.json())
+    .then(res => {
+        if(!res.ok) throw new Error("Could not load member list");
+        return res.json();
+    })
     .then(data => {
         if(data.success && data.members.length > 0) {
             const myDeviceId = localStorage.getItem('tb_device_name');
@@ -1989,7 +2103,7 @@ window.loadPendingMembers = function(slug) {
     })
     .catch(err => {
         console.error("Member load error", err);
-        sectionPending.style.display = 'none';
+        if(sectionPending) sectionPending.style.display = 'none';
         if(sectionActive) sectionActive.style.display = 'none';
     });
 }
@@ -2000,7 +2114,10 @@ window.actionMember = function(id, action) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ member_id: id, action: action })
     })
-    .then(res => res.json())
+    .then(res => {
+        if(!res.ok) throw new Error("Action failed");
+        return res.json();
+    })
     .then(data => {
         if(data.success) {
             showToast(`Member ${action}D`); // APPROVED / REJECTED
@@ -2008,17 +2125,29 @@ window.actionMember = function(id, action) {
             const slug = localStorage.getItem('tb_team_slug');
             if(slug) loadPendingMembers(slug);
         } else {
-            showToast(data.message, "error");
+            showToast(data.message || "Could not complete action", "error");
         }
+    })
+    .catch(err => {
+        showToast("Error: " + err.message, "error");
     });
 }
 
-window.switchTeam = function(slug, name) {
+window.switchTeam = switchTeam;
+function switchTeam(slug, name, inviteCode) {
     localStorage.setItem('tb_team_slug', slug);
     localStorage.setItem('tb_team_name', name);
+    if(inviteCode) localStorage.setItem('tb_team_invite_code', inviteCode);
+    else localStorage.removeItem('tb_team_invite_code'); // Clear if unknown
+    
     showToast(`Switched to ${name}`);
+    
+    // HARD REFRESH for this new team
+    window.allPatientData = [];
+    window.lastSyncTime = null;
+    
     updateMyTeamUI();
-    loadTeams();
+    loadTeams(); 
     if(window.refreshPatientDataAndUI) window.refreshPatientDataAndUI();
 }
 
@@ -2030,7 +2159,10 @@ window.triggerLeaveFlow = function(slug) {
              headers: { 'Content-Type': 'application/json', 'X-Device-ID': deviceId },
              body: JSON.stringify({ slug: slug })
          })
-         .then(res => res.json())
+         .then(res => {
+             if(!res.ok) throw new Error("Leave request failed");
+             return res.json();
+         })
          .then(data => {
              if(data.success) {
                  showToast("Left team successfully.");
@@ -2041,8 +2173,11 @@ window.triggerLeaveFlow = function(slug) {
                  loadTeams();
                  window.location.reload(); // Clean state
              } else {
-                 showToast(data.message, "error");
+                 showToast(data.message || "Failed to leave", "error");
              }
+         })
+         .catch(err => {
+             showToast("Error: " + err.message, "error");
          });
     }
 }
@@ -2065,7 +2200,10 @@ window.triggerDisbandFlow = function(slug) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ slug: slug })
     })
-    .then(res => res.json())
+    .then(res => {
+        if(!res.ok) throw new Error("Could not retrieve stats");
+        return res.json();
+    })
     .then(data => {
         if(data.success) {
             document.getElementById('statPatients').innerText = data.stats.patients;
@@ -2078,6 +2216,10 @@ window.triggerDisbandFlow = function(slug) {
             showToast("Failed to fetch stats: " + data.message, "error");
             modal.style.display = 'none';
         }
+    })
+    .catch(err => {
+        showToast("Error: " + err.message, "error");
+        modal.style.display = 'none';
     });
 }
 
@@ -2096,7 +2238,10 @@ window.executeDisband = function(slug) {
         },
         body: JSON.stringify({ slug: slug, device_id: deviceId })
     })
-    .then(res => res.json())
+    .then(res => {
+        if(!res.ok) throw new Error("Disband request failed");
+        return res.json();
+    })
     .then(res => {
         if(res.success) {
             // Trigger Download
@@ -2114,6 +2259,7 @@ window.executeDisband = function(slug) {
             localStorage.removeItem('tb_team_slug');
             localStorage.removeItem('tb_team_name');
             localStorage.removeItem('tb_team_status');
+            localStorage.removeItem('tb_team_invite_code');
             
             setTimeout(() => {
                 document.getElementById('disbandModal').style.display = 'none';
