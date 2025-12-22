@@ -40,10 +40,18 @@ def migrate():
                 id INTEGER PRIMARY KEY,
                 slug VARCHAR(50) UNIQUE NOT NULL,
                 name VARCHAR(100) NOT NULL,
+                invite_code VARCHAR(20) UNIQUE,
                 created_at TIMESTAMP,
                 created_by_uid VARCHAR(36)
             )
         ''')
+        # Check if we need to add column (for existing tables)
+        try:
+             c.execute("ALTER TABLE team ADD COLUMN invite_code VARCHAR(20)")
+             print("Added team.invite_code")
+        except:
+             pass 
+        
         print("Ensured team table")
     except Exception as e:
         print(f"Error checking team table: {e}")

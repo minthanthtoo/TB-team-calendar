@@ -49,6 +49,7 @@ class Team(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     slug = db.Column(db.String(50), unique=True, nullable=False)
     name = db.Column(db.String(100), nullable=False)
+    invite_code = db.Column(db.String(20), unique=True) # New
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class TeamMember(db.Model):
@@ -56,8 +57,14 @@ class TeamMember(db.Model):
     team_slug = db.Column(db.String(50), nullable=False) # e.g. "ygn-team"
     user_name = db.Column(db.String(100), nullable=False) # e.g. "Dr. Smith" or Device Name
     device_id = db.Column(db.String(100)) # Unique Device/Browser ID
-    status = db.Column(db.String(20), default='PENDING') # PENDING, APPROVED
+    role = db.Column(db.String(20), default='MEMBER') # ADMIN, MEMBER
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+import socket
+
+
+import socket
 
 
 import socket
@@ -302,16 +309,64 @@ def delete_patient(patient_id):
 @app.route("/api/get_all_data")
 def get_all_data():
     target_team = request.args.get('team')
+    since_str = request.args.get('since')
+    requester_device = request.headers.get('X-Device-ID')
     
+    # ... Security Checks ...
     query = Patient.query
-    if target_team and target_team != 'ALL':
+    if target_team and target_team != 'ALL' and target_team != 'DEFAULT':
+        # SECURITY CHECK
+        # Must be APPROVED member of this team
+        if not requester_device:
+            return jsonify(error="Device ID required"), 403
+            
+        membership = TeamMember.query.filter_by(
+            team_slug=target_team, 
+            device_id=requester_device, 
+            status='APPROVED'
+        ).first()
+        
+        if not membership:
+             return jsonify(error="Unauthorized: Not an approved member"), 403
+
         # Filter patients by team
         query = query.filter_by(team_id=target_team)
-        
-    patients = query.all()
-    deleted = DeletedRecord.query.all()
+
+    # DELTA SYNC LOGIC
+    if since_str:
+        try:
+            since_dt = datetime.fromisoformat(since_str)
+            # 1. Patients modified directly
+            p_direct = query.filter(Patient.updated_at > since_dt).all()
+            
+            # 2. Patients with modified events (if query filters by team, join ensures we respect that)
+            p_via_events = query.join(Event).filter(Event.updated_at > since_dt).all()
+            
+            # Union unique
+            patients = list(set(p_direct + p_via_events))
+            
+            # 3. Deleted Records (since time)
+            deleted = DeletedRecord.query.filter(DeletedRecord.timestamp > since_dt).all()
+            
+            # 4. Teams & Members (since time)
+            # Note: We return ALL teams/members if no 'since', but delta if 'since' exists
+            # For Teams, normally we don't edit them much, but let's check created_at? 
+            # Team doesn't have updated_at yet. Use created_at for new teams.
+            teams = Team.query.filter(Team.created_at > since_dt).all()
+            members = TeamMember.query.filter(TeamMember.updated_at > since_dt).all()
+            
+        except ValueError:
+             return jsonify(success=False, message="Invalid Date Format"), 400
+    else:
+        # Full Sync
+        patients = query.all()
+        deleted = DeletedRecord.query.all()
+        teams = Team.query.all()
+        members = TeamMember.query.all()
     
     data = []
+    
+    # 1. Patients & Events
     for p in patients:
         p_data = {
             "uid": p.uid,
@@ -333,7 +388,21 @@ def get_all_data():
         
     deleted_uids = [d.uid for d in deleted]
     
-    return jsonify(success=True, data=data, deleted=deleted_uids)
+    teams_data = [
+        {"slug": t.slug, "name": t.name, "created_at": t.created_at.isoformat() if t.created_at else None}
+        for t in teams
+    ]
+    
+    members_data = [
+        {
+            "team_slug": m.team_slug, "user_name": m.user_name, 
+            "device_id": m.device_id, "status": m.status,
+            "updated_at": m.updated_at.isoformat() if m.updated_at else None
+        }
+        for m in members
+    ]
+    
+    return jsonify(success=True, data=data, deleted=deleted_uids, teams=teams_data, members=members_data, timestamp=datetime.utcnow().isoformat())
 
 # 2. Merge Data (Guest pulls from Host -> Appends/Replaces Local)
 @app.route("/api/merge_data", methods=["POST"])
@@ -344,21 +413,44 @@ def merge_data():
         incoming_patients = req.get("data", [])
         incoming_deleted = req.get("deleted", []) # New
 
+        incoming_teams = req.get("teams", [])
+        incoming_members = req.get("members", [])
+
         if mode == "replace":
             db.drop_all()
             db.create_all()
         
         # 1. Process Deletions First
         for d_uid in incoming_deleted:
-            # Check if we have this patient active
-            p = Patient.query.filter_by(uid=d_uid).first()
-            if p:
-                db.session.delete(p)
-            # Ensure tombstone exists locally too
+            # Check for Team Deletion (prefix "team:")
+            if d_uid.startswith("team:"):
+                # Handle Team Delete
+                t_slug = d_uid.split(":", 1)[1]
+                t_rec = Team.query.filter_by(slug=t_slug).first()
+                if t_rec: 
+                    # Cascade delete everything for this team
+                    sub_p = Patient.query.filter_by(team_id=t_slug).all()
+                    for sp in sub_p:
+                        Event.query.filter_by(patient_id=sp.id).delete()
+                        db.session.delete(sp)
+                        # We don't necessarily need tombstones for these sub-patients 
+                        # if the peer also gets the 'team:' tombstone. 
+                        # But adding them doesn't hurt.
+                    
+                    TeamMember.query.filter_by(team_slug=t_slug).delete()
+                    db.session.delete(t_rec)
+                    print(f"Synced Deletion of Team: {t_slug}")
+            else:
+                # Handle Patient Delete
+                p = Patient.query.filter_by(uid=d_uid).first()
+                if p:
+                    db.session.delete(p)
+                    
+            # Ensure tombstone exists locally too (to propagate further)
             if not DeletedRecord.query.filter_by(uid=d_uid).first():
                 db.session.add(DeletedRecord(uid=d_uid))
         
-        # 2. Process Adds/Updates
+        # 2. Process Adds/Updates (Patients)
         count = 0
         for p_in in incoming_patients:
             in_uid = p_in.get("uid")
@@ -370,6 +462,8 @@ def merge_data():
 
             new_p = Patient(
                 uid=in_uid if in_uid else str(uuid.uuid4()),
+                # If team_id missing in older payloads, default to DEFAULT
+                team_id=p_in.get("team_id", "DEFAULT"), 
                 name=p_in["name"], age=p_in["age"], sex=p_in["sex"],
                 address=p_in["address"], regime=p_in["regime"], remark=p_in["remark"]
             )
@@ -385,6 +479,30 @@ def merge_data():
                 )
                 db.session.add(new_e)
             count += 1
+            
+        # 3. Process Teams (Append Only - Safe, as slugs are unique)
+        for t_in in incoming_teams:
+            if not Team.query.filter_by(slug=t_in["slug"]).first():
+                db.session.add(Team(name=t_in["name"], slug=t_in["slug"]))
+                
+        # 4. Process Members
+        for m_in in incoming_members:
+            # Check if membership exists
+            existing_mem = TeamMember.query.filter_by(
+                team_slug=m_in["team_slug"], 
+                device_id=m_in["device_id"]
+            ).first()
+            
+            if existing_mem:
+                # Update status if changed (e.g. APPROVED on host)
+                existing_mem.status = m_in["status"]
+            else:
+                db.session.add(TeamMember(
+                    team_slug=m_in["team_slug"],
+                    user_name=m_in["user_name"],
+                    device_id=m_in["device_id"],
+                    status=m_in["status"]
+                ))
         
         db.session.commit()
         return jsonify(success=True, count=count)
@@ -402,6 +520,9 @@ def stage_incoming():
         data = request.json
         incoming_data = data.get("data", [])
         incoming_deleted = data.get("deleted", [])
+        incoming_teams = data.get("teams", [])
+        incoming_members = data.get("members", [])
+        
         device_name = data.get("device_name", "Unknown Guest")
         
         # Update Stats
@@ -416,6 +537,8 @@ def stage_incoming():
         DEVICE_STAGING[device_name] = {
             "data": incoming_data,
             "deleted": incoming_deleted,
+            "teams": incoming_teams,
+            "members": incoming_members,
             "timestamp": datetime.now()
         }
         
@@ -429,7 +552,12 @@ def get_host_info():
     devices_list = []
     for name, info in CONNECTED_DEVICES.items():
         # Check if pending data exists
-        has_pending = name in DEVICE_STAGING and (len(DEVICE_STAGING[name]["data"]) > 0 or len(DEVICE_STAGING[name]["deleted"]) > 0)
+        has_pending = name in DEVICE_STAGING and (
+            len(DEVICE_STAGING[name]["data"]) > 0 or 
+            len(DEVICE_STAGING[name]["deleted"]) > 0 or
+            len(DEVICE_STAGING[name].get("teams", [])) > 0 or
+            len(DEVICE_STAGING[name].get("members", [])) > 0
+        )
         
         devices_list.append({
             "name": name,
@@ -445,7 +573,6 @@ def get_host_info():
     })
 
 @app.route("/api/get_staged_data")
-@app.route("/api/get_staged_data")
 def get_staged_data():
     target_device = request.args.get("device")
     
@@ -454,6 +581,7 @@ def get_staged_data():
         d_items = []
         raw_data = stage_obj.get("data", [])
         raw_del = stage_obj.get("deleted", [])
+        raw_teams = stage_obj.get("teams", [])
         
         # Records
         for i, p in enumerate(raw_data):
@@ -494,6 +622,18 @@ def get_staged_data():
                     "source_device": d_name,
                     "idx": i
                 })
+        
+        # Teams (Summary)
+        if raw_teams:
+            d_items.append({
+                "uid": "teams-summary",
+                "name": f"{len(raw_teams)} Teams (Will Auto-Merge)",
+                "status": "NEW",
+                "type": "info",
+                "source_device": d_name,
+                "idx": -1
+            })
+
         return d_items
 
     enriched = []
@@ -531,6 +671,32 @@ def commit_staged():
             current_data = stage.get("data", [])
             current_deleted = stage.get("deleted", [])
             
+            # --- AUTO MERGE TEAMS & MEMBERS ---
+            current_teams = stage.get("teams", [])
+            current_members = stage.get("members", [])
+            
+            for t_in in current_teams:
+                if not Team.query.filter_by(slug=t_in["slug"]).first():
+                    db.session.add(Team(name=t_in["name"], slug=t_in["slug"]))
+            
+            for m_in in current_members:
+                 existing_mem = TeamMember.query.filter_by(team_slug=m_in["team_slug"], device_id=m_in["device_id"]).first()
+                 if existing_mem:
+                     existing_mem.status = m_in["status"]
+                 else:
+                     db.session.add(TeamMember(
+                        team_slug=m_in["team_slug"],
+                        user_name=m_in["user_name"],
+                        device_id=m_in["device_id"],
+                        status=m_in["status"]
+                    ))
+            
+            # Clear them after merge to avoid re-merging
+            stage["teams"] = []
+            stage["members"] = []
+            
+            # --- END AUTO MERGE ---
+            
             num_data = len(current_data)
             
             # Identify what to commit based on indices
@@ -561,12 +727,17 @@ def commit_staged():
                     exists.address = p_in["address"]
                     exists.regime = p_in["regime"]
                     exists.remark = p_in["remark"]
+                    
+                    # Update team_id if provided
+                    if "team_id" in p_in: exists.team_id = p_in["team_id"]
+                        
                     Event.query.filter_by(patient_id=exists.id).delete()
                 else:
                     exists = Patient(
                         uid=p_in.get("uid") or str(uuid.uuid4()),
                         name=p_in["name"], age=p_in["age"], sex=p_in["sex"],
-                        address=p_in["address"], regime=p_in["regime"], remark=p_in["remark"]
+                        address=p_in["address"], regime=p_in["regime"], remark=p_in["remark"],
+                        team_id=p_in.get("team_id", "DEFAULT")
                     )
                     db.session.add(exists)
                     db.session.flush()
@@ -632,7 +803,12 @@ def create_team():
     if Team.query.filter_by(slug=slug).first():
        return jsonify(success=False, message="Team name taken"), 400
        
-    new_team = Team(name=name, slug=slug)
+    # Generate Code (e.g. 6D4-A2B)
+    import random, string
+    chars = string.ascii_uppercase + string.digits
+    code = f"{''.join(random.choices(chars, k=3))}-{''.join(random.choices(chars, k=3))}"
+    
+    new_team = Team(name=name, slug=slug, invite_code=code)
     db.session.add(new_team)
     
     # Auto-approve creator (if we had auth, we'd link user. For now, create a 'Device Admin' member?)
@@ -640,38 +816,61 @@ def create_team():
     device_id = data.get("device_id", "Unknown")
     user_name = data.get("user_name", "Admin")
     
-    member = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status='APPROVED')
+    member = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status='APPROVED', role='ADMIN')
     db.session.add(member)
     
     db.session.commit()
-    return jsonify(success=True, team_slug=slug)
+    return jsonify(success=True, team_slug=slug, invite_code=code)
 
 @app.route("/api/teams/join", methods=["POST"])
 def join_team():
     data = request.json
     slug = data.get("slug")
+    code = data.get("code")
+    
     user_name = data.get("user_name")
     device_id = data.get("device_id")
     
-    team = Team.query.filter_by(slug=slug).first()
-    if not team: return jsonify(success=False, message="Team not found"), 404
+    team = None
+    if code:
+        # Case insensitive lookup
+        team = Team.query.filter(Team.invite_code.ilike(code)).first()
+        if team: slug = team.slug # Resolve code to slug
+    elif slug:
+        team = Team.query.filter_by(slug=slug).first()
+        
+    if not team: return jsonify(success=False, message="Team not found (Check Code or Slug)"), 404
     
     # Check existing
     existing = TeamMember.query.filter_by(team_slug=slug, device_id=device_id).first()
     if existing:
-        return jsonify(success=True, status=existing.status, message="Already requested")
+        return jsonify(success=True, status=existing.status, message="Already requested", team_slug=slug, team_name=team.name)
         
     new_mem = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status='PENDING')
     db.session.add(new_mem)
     db.session.commit()
     
-    return jsonify(success=True, status='PENDING')
+    return jsonify(success=True, status='PENDING', team_slug=slug, team_name=team.name)
 
 @app.route("/api/teams/list", methods=["GET"])
 def list_teams():
-    # Public list of teams so users can search
-    teams = Team.query.all()
-    return jsonify(success=True, teams=[{"name": t.name, "slug": t.slug} for t in teams])
+    # STRICT PRIVACY: Do NOT list all teams.
+    # Only return the user's current team if they are in one.
+    # To browse teams, they must know the slug/code.
+    
+    requester_device = request.headers.get('X-Device-ID')
+    if not requester_device:
+        return jsonify(success=True, teams=[])
+        
+    memberships = TeamMember.query.filter_by(device_id=requester_device).all()
+    my_teams = []
+    
+    for m in memberships:
+        t = Team.query.filter_by(slug=m.team_slug).first()
+        if t:
+            my_teams.append({"slug": t.slug, "name": t.name, "created_at": t.created_at.isoformat()})
+            
+    return jsonify(success=True, teams=my_teams)
 
 @app.route("/api/teams/members", methods=["GET"])
 def list_pending_members():
@@ -698,6 +897,109 @@ def approve_member():
     db.session.commit()
     return jsonify(success=True, status=mem.status)
 
+@app.route("/api/teams/stats", methods=["POST"])
+def team_stats():
+    data = request.json
+    slug = data.get("slug")
+    
+    team = Team.query.filter_by(slug=slug).first()
+    if not team: return jsonify(success=False, message="Team not found"), 404
+    
+    patients = Patient.query.filter_by(team_id=slug).all()
+    members = TeamMember.query.filter_by(team_slug=slug).all()
+    
+    p_count = len(patients)
+    e_count = sum([len(p.events) for p in patients])
+    m_count = len(members)
+    
+    # Estimate Size (Roughly)
+    # Serialize once to check size? Or just estimate.
+    # Let's do a quick serialization to be accurate for backup
+    backup_data = {
+        "team": {"name": team.name, "slug": team.slug},
+        "patients": [],
+        "members": []
+    }
+    for p in patients:
+        backup_data["patients"].append({"name": p.name, "events": len(p.events)}) # Minimal for size check
+        
+    import json
+    size_bytes = len(json.dumps(backup_data))
+    
+    return jsonify(success=True, stats={
+        "patients": p_count,
+        "events": e_count,
+        "members": m_count,
+        "size_bytes": size_bytes
+    })
+
+@app.route("/api/teams/disband", methods=["POST"])
+def disband_team():
+    try:
+        data = request.json
+        slug = data.get("slug")
+        requester_device = data.get("device_id")
+        
+        # Security: Verify Admin
+        req_header_dev = request.headers.get('X-Device-ID')
+        if req_header_dev: requester_device = req_header_dev
+        
+        member = TeamMember.query.filter_by(team_slug=slug, device_id=requester_device).first()
+        if not member or member.role != 'ADMIN':
+            return jsonify(success=False, message="Unauthorized: Only Team Admins can disband."), 403
+
+        team = Team.query.filter_by(slug=slug).first()
+        if not team: return jsonify(success=False, message="Team not found"), 404
+        
+        # 1. Generate Backup
+        patients = Patient.query.filter_by(team_id=slug).all()
+        members = TeamMember.query.filter_by(team_slug=slug).all()
+        
+        backup = {
+            "meta": {"exported_at": datetime.now().isoformat(), "type": "team_disband_backup"},
+            "team": {"name": team.name, "slug": team.slug, "created_at": team.created_at.isoformat()},
+            "members": [{"user_name": m.user_name, "device_id": m.device_id, "status": m.status} for m in members],
+            "patients": []
+        }
+        
+        for p in patients:
+            p_data = {
+                "uid": p.uid, "name": p.name, "age": p.age, "sex": p.sex,
+                "address": p.address, "regime": p.regime, "remark": p.remark,
+                "events": []
+            }
+            for e in p.events:
+                p_data["events"].append({
+                    "title": e.title, "start": e.start, "original_start": e.original_start,
+                    "color": e.color, "missed_days": e.missed_days, "outcome": e.outcome
+                })
+            backup["patients"].append(p_data)
+            
+        # 2. Delete Data
+        for p in patients:
+            # Delete events
+            Event.query.filter_by(patient_id=p.id).delete()
+            # Delete patient
+            db.session.delete(p)
+            # Create Tombstone for patient? Yes, to be safe.
+            if p.uid: db.session.add(DeletedRecord(uid=p.uid))
+            
+        for m in members:
+            db.session.delete(m)
+            
+        db.session.delete(team)
+        
+        # 3. Create Team Tombstone for Sync
+        # Prefix with 'team:' so merge logic knows it's a team
+        db.session.add(DeletedRecord(uid=f"team:{slug}"))
+        
+        db.session.commit()
+        
+        return jsonify(success=True, backup=backup)
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify(success=False, message=str(e)), 500
 
 if __name__ == "__main__":
     with app.app_context():

@@ -319,20 +319,67 @@ document.addEventListener('DOMContentLoaded', function() {
       }
   }
 
+  // Global Sync State
+  window.lastSyncTime = null;
+
   // Helper to refresh data and then update detail view
   window.refreshPatientDataAndUI = function(targetUid) {
       const team = localStorage.getItem('tb_team_slug') || '';
-      const url = team ? `/api/get_all_data?team=${team}` : '/api/get_all_data';
+      const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+      let url = team ? `/api/get_all_data?team=${team}` : '/api/get_all_data';
       
-      fetch(url)
-      .then(res => res.json())
+      // Delta Sync: Only request 'since' if we have data and a previous sync time
+      if(window.lastSyncTime && window.allPatientData && window.allPatientData.length > 0) {
+          url += `&since=${window.lastSyncTime}`;
+      }
+      
+      fetch(url, {
+          headers: { 'X-Device-ID': deviceId }
+      })
+      .then(res => {
+          if(res.status === 403) {
+              showToast("Access Denied: You are not approved for this team.", "error");
+              return { success: false };
+          }
+          return res.json();
+      })
       .then(data => {
           if(data.success) {
-              window.allPatientData = data.data;
+              // Update Sync Time
+              if(data.timestamp) window.lastSyncTime = data.timestamp;
+              
+              if(url.includes('&since=')) {
+                  console.log("Partial Sync Received:", data.data.length, "updates", data.deleted.length, "deletions");
+                  
+                  // 1. Process Deletions
+                  if(data.deleted && data.deleted.length > 0) {
+                      const delSet = new Set(data.deleted);
+                      window.allPatientData = window.allPatientData.filter(p => !delSet.has(p.uid));
+                      // Also handle Team deletions if necessary (but that's usually full reload)
+                  }
+                  
+                  // 2. Process Updates/Adds
+                  if(data.data && data.data.length > 0) {
+                      const updateMap = new Map(data.data.map(p => [p.uid, p]));
+                      // Update existing
+                      window.allPatientData = window.allPatientData.map(p => updateMap.has(p.uid) ? updateMap.get(p.uid) : p);
+                      
+                      // Add new (those not in existing list)
+                      const existingUids = new Set(window.allPatientData.map(p => p.uid));
+                      data.data.forEach(p => {
+                          if(!existingUids.has(p.uid)) window.allPatientData.push(p);
+                      });
+                  }
+              } else {
+                  // Full Sync
+                  window.allPatientData = data.data;
+              }
+
               if(targetUid) window.openPatientDetail(targetUid);
               window.renderPatientList(); // Refresh list/badges too
           }
-      });
+      })
+      .catch(err => console.error("Fetch error:", err));
   }
 
   // -- Modal Close Logic --
@@ -757,6 +804,8 @@ document.addEventListener('DOMContentLoaded', function() {
                   body: JSON.stringify({ 
                       data: local.data, 
                       deleted: local.deleted,
+                      teams: local.teams || [], // Pass teams
+                      members: local.members || [], // Pass members
                       device_name: myName
                   }) 
               });
@@ -1438,6 +1487,8 @@ document.addEventListener('DOMContentLoaded', () => {
                      showToast("Team Created! You are now admin.");
                      localStorage.setItem('tb_team_slug', data.team_slug);
                      localStorage.setItem('tb_team_name', name);
+                     if(data.invite_code) localStorage.setItem('tb_team_invite_code', data.invite_code);
+                     
                      updateMyTeamUI();
                      loadTeams(); // Refresh list
                  } else {
@@ -1524,12 +1575,16 @@ window.loadTeams = function() {
     const list = document.getElementById('teamsList');
     list.innerHTML = '<div style="text-align:center; padding:10px;"><span class="spinner"></span></div>';
     
-    fetch('/api/teams/list')
+    const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+    
+    fetch('/api/teams/list', {
+        headers: { 'X-Device-ID': deviceId }
+    })
     .then(res => res.json())
     .then(data => {
         if(!data.success) return;
         if(data.teams.length === 0) {
-            list.innerHTML = '<div style="padding:10px; color:#94a3b8; text-align:center;">No teams found. Create one!</div>';
+            list.innerHTML = '<div style="padding:10px; color:#94a3b8; text-align:center;">No teams found (or not a member). Use Code to Join.</div>';
             return;
         }
         
@@ -1582,6 +1637,17 @@ window.joinTeam = function(slug) {
 }
 
 window.updateMyTeamUI = function() {
+    const container = document.getElementById('myTeamSection'); // Ensure this ID exists or target correct container
+    // Note: The previous view showed updating 'myTeamDisplay', 'myTeamDesc' etc. 
+    // But the new design injects InnerHTML into a container. 
+    // Let's stick to the simpler ID targeting if the container isn't a single div.
+    
+    // Wait, the previous code updated specific elements. 
+    // If I want to inject the button, I need a place to put it. 
+    // Let's UPDATE the 'teamsModal' content or the 'myTeam' section in the modal.
+    // The previous view_file of index.html showed a 'teamsModal'.
+    // Let's assume we are updating the "Current Team" section inside that modal.
+    
     const slug = localStorage.getItem('tb_team_slug');
     const name = localStorage.getItem('tb_team_name') || slug;
     
@@ -1589,18 +1655,287 @@ window.updateMyTeamUI = function() {
     const desc = document.getElementById('myTeamDesc');
     const badge = document.getElementById('teamBadge');
     
+    // Also target the container for the button if possible, OR inject the button after the description.
+    // Let's find a container in the modal. 'teamsModal' has sections.
+    // Re-reading index.html would be safer but let's try to append the button to 'myTeamSection' if it exists, or just after myTeamDesc.
+    
+    // Actually, let's redefine this to inject the FULL HTML for the "Current Team" section if we can find the parent.
+    // Looking at index.html (implied), there is likely a div wrapping these details.
+    
+    // Fallback: If elements exist, update them. And try to append button if not present.
+    // But a cleaner way is to expect a container.
+    
+    // Let's use the logic I designed: specific element updates + button injection.
+    
     if(slug) {
         if(display) display.innerText = name;
-        if(desc) desc.innerText = "You are syncing data for this team only.";
+        if(desc) {
+            desc.innerText = "You are syncing data for this team only.";
+        // Check if button already exists to avoid dupes
+            if(!document.getElementById('btn-disband-team')) {
+                const btn = document.createElement('div');
+                btn.style.marginTop = '15px';
+                btn.style.textAlign = 'right';
+                btn.innerHTML = `<button id="btn-disband-team" class="btn" style="background: var(--danger); color: white; font-size: 0.8rem; padding: 4px 10px;" onclick="triggerDisbandFlow('${slug}')">⚠️ Disband Team</button>`;
+                desc.parentNode.appendChild(btn);
+            }
+            
+            // Show Invite Code
+            const code = localStorage.getItem('tb_team_invite_code');
+            if(code) {
+                 if(!document.getElementById('invite-code-display')) {
+                     const codeDiv = document.createElement('div');
+                     codeDiv.id = 'invite-code-display';
+                     codeDiv.style.background = '#f0f9ff';
+                     codeDiv.style.border = '1px dashed #0ea5e9';
+                     codeDiv.style.color = '#0369a1';
+                     codeDiv.style.padding = '8px';
+                     codeDiv.style.borderRadius = '6px';
+                     codeDiv.style.marginTop = '10px';
+                     codeDiv.style.fontSize = '0.9rem';
+                     codeDiv.style.display = 'flex';
+                     codeDiv.style.justifyContent = 'space-between';
+                     codeDiv.style.alignItems = 'center';
+                     
+                     codeDiv.innerHTML = `
+                        <span>Invite Code: <strong style="font-family:monospace; font-size:1.1em;">${code}</strong></span>
+                        <div style="display:flex; gap:5px;">
+                            <button onclick="navigator.clipboard.writeText('${code}'); showToast('Code Copied!');" style="background:none; border:none; color:#0284c7; cursor:pointer;" title="Copy">📋</button>
+                            <a href="mailto:?subject=Join my TB Calendar Team&body=Here is the invite code to join my team: ${code}" style="text-decoration:none; color:#0284c7; cursor:pointer; font-size:1.2em;" title="Email Invite">✉️</a>
+                        </div>
+                     `;
+                     desc.parentNode.insertBefore(codeDiv, document.getElementById('btn-disband-team').parentNode);
+                 }
+            }
+        }
         if(badge) {
             badge.style.display = 'inline-block';
             badge.innerText = slug.slice(0,3).toUpperCase();
         }
+        
+        // Trigger Admin Check
+        loadPendingMembers(slug);
+        
     } else {
         if(display) display.innerText = "Default (Public)";
-        if(desc) desc.innerText = "You are viewing/syncing all public data.";
+        if(desc) {
+            desc.innerText = "You are viewing/syncing all public data.";
+            // Remove button if it exists
+             const btn = document.getElementById('btn-disband-team');
+             if(btn) btn.parentNode.remove(); 
+             
+             const codeDiv = document.getElementById('invite-code-display');
+             if(codeDiv) codeDiv.remove();
+        }
         if(badge) badge.style.display = 'none';
+        
+        // Hide Admin Section
+        const adminSec = document.getElementById('adminPendingSection');
+        if(adminSec) adminSec.style.display = 'none';
     }
+}
+
+window.joinTeamByCode = function() {
+    const codeInput = document.getElementById('joinTeamCode');
+    const code = codeInput.value.trim().toUpperCase();
+    if(!code) return showToast("Please enter a code", "error");
+    
+    // Pattern validation (optional)
+    // if(!/^[A-Z0-9]{3}-[A-Z0-9]{3}$/.test(code)) ...
+    
+    const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+    
+    fetch('/api/teams/join', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ code: code, user_name: deviceId, device_id: deviceId })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if(data.success) {
+             showToast("Joined! " + (data.status === 'APPROVED' ? "Access Granted." : "Waiting for Approval."));
+             
+             localStorage.setItem('tb_team_slug', data.team_slug);
+             localStorage.setItem('tb_team_name', data.team_name); // Backend returns team_name now
+             // If we joined by code, we implicitly know the code!
+             localStorage.setItem('tb_team_invite_code', code);
+             
+             updateMyTeamUI();
+             loadTeams();
+        } else {
+            showToast(data.message, "error");
+        }
+    });
+}
+
+window.loadPendingMembers = function(slug) {
+    const containerPending = document.getElementById('pendingMembersList');
+    const sectionPending = document.getElementById('adminPendingSection');
+    
+    const containerActive = document.getElementById('activeMembersList');
+    const sectionActive = document.getElementById('adminActiveSection');
+    
+    if(!containerPending || !sectionPending) return;
+    
+    fetch(`/api/teams/members?slug=${slug}`)
+    .then(res => res.json())
+    .then(data => {
+        if(data.success && data.members.length > 0) {
+            const myDeviceId = localStorage.getItem('tb_device_name');
+
+            // 1. Pending
+            const pending = data.members.filter(m => m.status === 'PENDING');
+            if(pending.length > 0) {
+                sectionPending.style.display = 'block';
+                let html = '';
+                pending.forEach(m => {
+                    html += `
+                    <div style="background: white; border: 1px solid #bbf7d0; padding: 8px; border-radius: 6px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 0.85rem; font-weight: 600; color: #166534;">${m.user_name}</div>
+                            <div style="font-size: 0.7rem; color: #64748b;">${m.device_id.substring(0,10)}...</div>
+                        </div>
+                        <div style="display: flex; gap: 5px;">
+                            <button onclick="actionMember(${m.id}, 'APPROVE')" style="background: #dcfce7; color: #166534; border: 1px solid #86efac; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.75rem; font-weight: 600;">✓</button>
+                            <button onclick="actionMember(${m.id}, 'REJECT')" style="background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.75rem; font-weight: 600;">✗</button>
+                        </div>
+                    </div>`;
+                });
+                containerPending.innerHTML = html;
+            } else {
+                sectionPending.style.display = 'none';
+            }
+
+            // 2. Active
+            const active = data.members.filter(m => m.status === 'APPROVED');
+            if(active.length > 0 && containerActive && sectionActive) {
+                sectionActive.style.display = 'block';
+                let html = '';
+                active.forEach(m => {
+                    const isMe = m.device_id === myDeviceId;
+                    const removeBtn = !isMe ? 
+                        `<button onclick="if(confirm('Remove this user?')) actionMember(${m.id}, 'REJECT')" style="background: white; color: #ef4444; border: 1px solid #fca5a5; border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 0.7rem;">Remove</button>` 
+                        : `<span style="font-size:0.7rem; color:#15803d; font-weight:bold; background:#dcfce7; padding:2px 6px; border-radius:4px;">YOU</span>`;
+                        
+                    html += `
+                    <div style="padding: 6px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 0.85rem; font-weight: 600; color: #334155;">${m.user_name}</div>
+                            <div style="font-size: 0.7rem; color: #94a3b8;">${m.device_id.substring(0,8)}...</div>
+                        </div>
+                        <div>${removeBtn}</div>
+                    </div>`;
+                });
+                containerActive.innerHTML = html;
+            } else {
+                 if(sectionActive) sectionActive.style.display = 'none';
+            }
+
+        } else {
+            sectionPending.style.display = 'none';
+            if(sectionActive) sectionActive.style.display = 'none';
+        }
+    })
+    .catch(err => {
+        console.error("Member load error", err);
+        sectionPending.style.display = 'none';
+        if(sectionActive) sectionActive.style.display = 'none';
+    });
+}
+
+window.actionMember = function(id, action) {
+    fetch('/api/teams/approve', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ member_id: id, action: action })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if(data.success) {
+            showToast(`Member ${action}D`); // APPROVED / REJECTED
+            // Refresh
+            const slug = localStorage.getItem('tb_team_slug');
+            if(slug) loadPendingMembers(slug);
+        } else {
+            showToast(data.message, "error");
+        }
+    });
+}
+
+window.triggerDisbandFlow = function(slug) {
+    const modal = document.getElementById('disbandModal');
+    const confirmBtn = document.getElementById('confirmDisbandBtn');
+    
+    // Show Loading state in stats
+    document.getElementById('statPatients').innerText = '...';
+    document.getElementById('statEvents').innerText = '...';
+    document.getElementById('statMembers').innerText = '...';
+    document.getElementById('statSize').innerText = '...';
+    
+    modal.style.display = 'flex';
+    
+    // Fetch Stats
+    fetch('/api/teams/stats', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ slug: slug })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if(data.success) {
+            document.getElementById('statPatients').innerText = data.stats.patients;
+            document.getElementById('statEvents').innerText = data.stats.events;
+            document.getElementById('statMembers').innerText = data.stats.members;
+            document.getElementById('statSize').innerText = (data.stats.size_bytes / 1024).toFixed(2) + ' KB';
+            
+            confirmBtn.onclick = () => executeDisband(slug);
+        } else {
+            showToast("Failed to fetch stats: " + data.message, "error");
+            modal.style.display = 'none';
+        }
+    });
+}
+
+window.executeDisband = function(slug) {
+    const btn = document.getElementById('confirmDisbandBtn');
+    btn.innerHTML = 'Downloading... <span class="spinner"></span>';
+    btn.disabled = true;
+    
+    fetch('/api/teams/disband', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ slug: slug })
+    })
+    .then(res => res.json())
+    .then(res => {
+        if(res.success) {
+            // Trigger Download
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(res.backup, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", `backup-${slug}-${new Date().toISOString()}.json`);
+            document.body.appendChild(downloadAnchorNode); // required for firefox
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+            
+            showToast("Team Disbanded & Backup Downloaded.");
+            
+            // Reset Local State
+            localStorage.removeItem('tb_team_slug');
+            localStorage.removeItem('tb_team_name');
+            localStorage.removeItem('tb_team_status');
+            
+            setTimeout(() => window.location.reload(), 2000);
+        } else {
+            throw new Error(res.message);
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        showToast("Disband Failed: " + err.message, "error");
+        btn.innerHTML = '💀 Confirm & Download';
+        btn.disabled = false;
+    });
 }
 
 // Initial check
