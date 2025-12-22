@@ -414,58 +414,66 @@ def get_host_info():
     })
 
 @app.route("/api/get_staged_data")
+@app.route("/api/get_staged_data")
 def get_staged_data():
     target_device = request.args.get("device")
     
-    if not target_device or target_device not in DEVICE_STAGING:
-        return jsonify(success=True, data=[], message="No device selected or no data.")
+    # helper
+    def process_device_stage(d_name, stage_obj):
+        d_items = []
+        raw_data = stage_obj.get("data", [])
+        raw_del = stage_obj.get("deleted", [])
+        
+        # Records
+        for i, p in enumerate(raw_data):
+            status = "NEW"
+            existing = None
+            if p.get("uid"): existing = Patient.query.filter_by(uid=p.get("uid")).first()
+            if not existing: existing = Patient.query.filter_by(name=p["name"]).first()
+            
+            if existing:
+                 is_diff = False
+                 if existing.name != p["name"]: is_diff = True
+                 if existing.age != p["age"]: is_diff = True
+                 if existing.sex != p["sex"]: is_diff = True
+                 if existing.address != p["address"]: is_diff = True
+                 if existing.regime != p["regime"]: is_diff = True
+                 if existing.remark != p["remark"]: is_diff = True
+                 if len(existing.events) != len(p["events"]): is_diff = True
+                 else:
+                     ex_evs = sorted(existing.events, key=lambda x: x.original_start)
+                     in_evs = sorted(p["events"], key=lambda x: x["original_start"])
+                     for i_ev in range(len(ex_evs)):
+                         e1 = ex_evs[i_ev]; e2 = in_evs[i_ev]
+                         if (e1.missed_days != e2["missed_days"] or e1.outcome != e2["outcome"] or e1.start != e2["start"]):
+                             is_diff = True; break
+                 status = "UPDATE" if is_diff else "SAME"
 
-    current_stage = DEVICE_STAGING[target_device]
-    staged_data = current_stage.get("data", [])
-    staged_deleted = current_stage.get("deleted", [])
+            d_items.append({**p, "status": status, "type": "record", "source_device": d_name, "idx": i})
+
+        # Deletions
+        for i, del_uid in enumerate(raw_del):
+            p_active = Patient.query.filter_by(uid=del_uid).first()
+            if p_active:
+                d_items.append({
+                    "uid": del_uid,
+                    "name": p_active.name + " (Deleted by peer)",
+                    "status": "DELETE",
+                    "type": "deletion",
+                    "source_device": d_name,
+                    "idx": i
+                })
+        return d_items
 
     enriched = []
     
-    # 1. Handle Regular Data
-    for p in staged_data:
-        status = "NEW"
-        existing = None
-        if p.get("uid"): existing = Patient.query.filter_by(uid=p.get("uid")).first()
-        if not existing: existing = Patient.query.filter_by(name=p["name"]).first()
-        
-        if existing:
-             is_diff = False
-             if existing.name != p["name"]: is_diff = True
-             if existing.age != p["age"]: is_diff = True
-             if existing.sex != p["sex"]: is_diff = True
-             if existing.address != p["address"]: is_diff = True
-             if existing.regime != p["regime"]: is_diff = True
-             if existing.remark != p["remark"]: is_diff = True
-             
-             if len(existing.events) != len(p["events"]): is_diff = True
-             else:
-                 ex_evs = sorted(existing.events, key=lambda x: x.original_start)
-                 in_evs = sorted(p["events"], key=lambda x: x["original_start"])
-                 for i in range(len(ex_evs)):
-                     e1 = ex_evs[i]; e2 = in_evs[i]
-                     if (e1.missed_days != e2["missed_days"] or e1.outcome != e2["outcome"] or e1.start != e2["start"]):
-                         is_diff = True; break
-             
-             status = "UPDATE" if is_diff else "SAME"
-
-        enriched.append({**p, "status": status, "type": "record"})
-
-    # 2. Handle Deletions
-    for del_uid in staged_deleted:
-        p_active = Patient.query.filter_by(uid=del_uid).first()
-        if p_active:
-            enriched.append({
-                "uid": del_uid,
-                "name": p_active.name + " (Deleted by peer)",
-                "status": "DELETE",
-                "type": "deletion"
-            })
-
+    if target_device and target_device in DEVICE_STAGING and target_device != "all":
+        enriched = process_device_stage(target_device, DEVICE_STAGING[target_device])
+    else:
+        # Aggregate ALL if 'all' or no device specified
+        for d_name, stage_obj in DEVICE_STAGING.items():
+            enriched.extend(process_device_stage(d_name, stage_obj))
+    
     return jsonify(success=True, data=enriched)
 
 @app.route("/api/commit_staged", methods=["POST"])
