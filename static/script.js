@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', function() {
+  if(window.hydrateLocalData) window.hydrateLocalData();
+
   
   // -- Toast Notification System --
   // -- Toast Notification System --
@@ -36,7 +38,8 @@ document.addEventListener('DOMContentLoaded', function() {
         statusEl.style.background = '#d1fae5';
         statusEl.style.color = '#059669';
     } else {
-        statusEl.innerHTML = '<span style="width: 8px; height: 8px; background: #ef4444; border-radius: 50%;"></span> Offline';
+        const hasCachedData = window.allPatientData && window.allPatientData.length > 0;
+        statusEl.innerHTML = `<span style="width: 8px; height: 8px; background: #ef4444; border-radius: 50%;"></span> Offline ${hasCachedData ? '(Viewing Cached Data)' : ''}`;
         statusEl.style.background = '#fee2e2';
         statusEl.style.color = '#b91c1c';
         showToast("You are offline. Changes may not save.", "error");
@@ -98,8 +101,24 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(data => successCallback(data))
         .catch(err => {
-            console.error("Calendar fetch error:", err);
-            failureCallback(err);
+            console.error("Calendar fetch error, falling back to local data:", err);
+            // Fallback to local data
+            if(window.allPatientData && window.allPatientData.length > 0) {
+                const events = [];
+                window.allPatientData.forEach(p => {
+                    if(p.events) {
+                        p.events.forEach(e => {
+                            // FullCalendar handles start/end filtering if we provide the whole list, 
+                            // but we can be efficient if we want. For now, just return all for this view.
+                            events.push(e);
+                        });
+                    }
+                });
+                successCallback(events);
+                showToast("Viewing Offline Calendar", "info");
+            } else {
+                failureCallback(err);
+            }
         });
     },
     dayCellDidMount: function(info) {
@@ -462,10 +481,14 @@ document.addEventListener('DOMContentLoaded', function() {
               if(targetUid) window.openPatientDetail(targetUid);
               window.renderPatientList(); // Refresh list/badges too
               
-              // Also sync Team List & Dashboard counts during background sync
+              // Also sync Team List & Dashboard counts & Registry Sidebar during background sync
               window.loadTeams();
               if(window.updateDashboardCounts) window.updateDashboardCounts();
+              if(window.updateRegistryStatus) window.updateRegistryStatus();
               if(window.calendar) window.calendar.refetchEvents();
+              
+              // Persist for offline access
+              if(window.persistLocalData) window.persistLocalData();
           }
       })
       .catch(err => {
@@ -749,12 +772,19 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!url) return null;
         
         // Auto-add protocol
-        if (!url.startsWith('http')) url = 'http://' + url;
+        if (!url.startsWith('http')) {
+            url = 'http://' + url;
+        }
         
-        // Auto-add port 5000 if simplified IP is used and no port specified
-        // Logic: if it ends with a digit and doesn't have a colon in the last 6 chars
+        // Auto-add port 5000 ONLY for IP addresses or localhost without port
+        // Skip for onrender.com, vercel.app, etc.
         const chk = url.split('://')[1] || url;
-        if (!chk.includes(':')) {
+        const isCloud = chk.includes('.') && 
+                       (chk.includes('onrender.com') || 
+                        chk.includes('vercel.app') || 
+                        chk.includes('herokuapp.com'));
+        
+        if (!chk.includes(':') && !isCloud) {
             url = url + ':5000';
         }
 
@@ -1147,7 +1177,46 @@ window.updateDashboardCounts = function() {
 }
 
 // -- Patient List & Detail View Logic --
+// -- Patient Data Persistence --
 window.allPatientData = [];
+window.lastSyncTime = localStorage.getItem('tb_last_sync_time');
+
+window.persistLocalData = function() {
+    try {
+        const team = localStorage.getItem('tb_team_slug') || 'DEFAULT';
+        localStorage.setItem('tb_all_patient_data', JSON.stringify(window.allPatientData));
+        localStorage.setItem('tb_all_patient_data_team', team);
+        if(window.lastSyncTime) {
+            localStorage.setItem('tb_last_sync_time', window.lastSyncTime);
+        }
+    } catch (e) {
+        console.warn("Failed to persist data to localStorage:", e);
+    }
+};
+
+window.hydrateLocalData = function() {
+    try {
+        const currentTeam = localStorage.getItem('tb_team_slug') || 'DEFAULT';
+        const cachedTeam = localStorage.getItem('tb_all_patient_data_team');
+        const cached = localStorage.getItem('tb_all_patient_data');
+        
+        if(cached && currentTeam === cachedTeam) {
+            window.allPatientData = JSON.parse(cached);
+            console.log(`[PWA] Hydrated ${window.allPatientData.length} patients from cache.`);
+            
+            // Immediate UI update from cache
+            if(window.renderPatientList) window.renderPatientList();
+            if(window.updateDashboardCounts) window.updateDashboardCounts();
+            if(window.updateRegistryStatus) window.updateRegistryStatus();
+            if(window.calendar) window.calendar.refetchEvents();
+        } else {
+            console.log("[PWA] No valid cache for current team.");
+        }
+    } catch (e) {
+        console.error("Hydration failed:", e);
+    }
+};
+
 
 window.openPatientList = function(initialFilter = 'all') {
     const modal = document.getElementById('patientListModal');
@@ -1414,7 +1483,10 @@ document.addEventListener('DOMContentLoaded', () => {
             items.forEach(item => {
                 const name = item.getAttribute('data-name');
                 const uid = item.getAttribute('data-uid');
-                if(name.includes(term) || (uid && uid.toLowerCase().includes(term))) {
+                const isMatch = name.includes(term) || (uid && uid.toLowerCase().includes(term));
+                const inTeam = !window.currentTeamUids || window.currentTeamUids.has(uid);
+                
+                if(isMatch && inTeam) {
                     item.style.display = 'block';
                 } else {
                     item.style.display = 'none';
@@ -1454,8 +1526,17 @@ window.updateRegistryStatus = async function() {
         
         const rData = await response.json();
         const patients = rData.data || [];
+        window.currentTeamUids = new Set(patients.map(p => p.uid));
+        
+        // Hide all sidebar items first
+        document.querySelectorAll('.patient-item').forEach(li => {
+            li.style.display = 'none';
+        });
         
         patients.forEach(p => {
+            const itemEl = document.querySelector(`.patient-item[data-uid="${p.uid}"]`);
+            if(itemEl) itemEl.style.display = 'block';
+
             const statusEl = document.getElementById(`status-${p.uid}`);
             const progressEl = document.getElementById(`progress-${p.uid}`);
             const progressText = document.getElementById(`progress-text-${p.uid}`);
@@ -1479,7 +1560,6 @@ window.updateRegistryStatus = async function() {
             statusEl.innerHTML = `<span class="badge ${badgeClass}">${status}</span>`;
             
             // 2. Calculate Progress
-            // Assuming treatment is roughly 180 days (6 months) or check first event
             if(sorted.length > 0) {
                 const start = new Date(sorted[0].start);
                 const now = new Date();
@@ -2149,6 +2229,9 @@ function switchTeam(slug, name, inviteCode) {
     updateMyTeamUI();
     loadTeams(); 
     if(window.refreshPatientDataAndUI) window.refreshPatientDataAndUI();
+    
+    // Save switch for offline
+    if(window.persistLocalData) window.persistLocalData();
 }
 
 window.triggerLeaveFlow = function(slug) {
