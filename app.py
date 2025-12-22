@@ -1002,7 +1002,39 @@ def disband_team():
         db.session.rollback()
         return jsonify(success=False, message=str(e)), 500
 
+def secure_migrate():
+    with app.app_context():
+        db_path = os.path.join('instance', 'cycles.db')
+        if not os.path.exists(db_path):
+            db_path = 'cycles.db'
+            
+        if not os.path.exists(db_path): return # Let create_all handle it
+        
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        
+        # 1. Check/Add 'status'
+        try:
+            c.execute("SELECT status FROM team_member LIMIT 1")
+        except sqlite3.OperationalError:
+            print("Migrating: Adding 'status' column...")
+            c.execute("ALTER TABLE team_member ADD COLUMN status VARCHAR(20) DEFAULT 'PENDING'")
+            
+        # 2. Check/Add 'role'
+        try:
+            c.execute("SELECT role FROM team_member LIMIT 1")
+        except sqlite3.OperationalError:
+            print("Migrating: Adding 'role' column...")
+            c.execute("ALTER TABLE team_member ADD COLUMN role VARCHAR(20) DEFAULT 'MEMBER'")
+            # Upgrade existing APPROVED to ADMIN (Legacy fix)
+            c.execute("UPDATE team_member SET role = 'ADMIN' WHERE status = 'APPROVED'")
+            
+        conn.commit()
+        conn.close()
+
 if __name__ == "__main__":
     with app.app_context():
+        secure_migrate()
         db.create_all()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
