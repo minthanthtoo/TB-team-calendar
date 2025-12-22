@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tb-tracker-v2';
+const CACHE_NAME = 'tb-tracker-v1';
 const ASSETS = [
   '/',
   '/static/style.css',
