@@ -47,6 +47,14 @@ document.addEventListener('DOMContentLoaded', function() {
       Notification.requestPermission();
   }
 
+  // Team Pagination State
+  window.currentPublicPage = 1;
+  window.changePublicPage = function(delta) {
+      window.currentPublicPage += delta;
+      if(window.currentPublicPage < 1) window.currentPublicPage = 1;
+      window.loadTeams();
+  };
+
   // -- Mobile Responsive View --
   const isMobile = window.innerWidth < 768;
   const initialViewType = isMobile ? 'listMonth' : 'dayGridMonth';
@@ -1663,103 +1671,120 @@ window.updateSidebarProgress = function() {
 window.loadTeams = function() {
     const listMy = document.getElementById('myTeamsList');
     const listPub = document.getElementById('publicTeamsList');
+    const sortSelect = document.getElementById('teamSortSelect');
+    const pagDiv = document.getElementById('teamPagination');
+    const pagInfo = document.getElementById('teamPageInfo');
     
-    if(listMy) listMy.innerHTML = '<div class="spinner"></div>';
-    if(listPub) listPub.innerHTML = '<div class="spinner"></div>';
+    if(listMy) listMy.innerHTML = '<div style="padding:10px; text-align:center;"><div class="spinner"></div></div>';
+    if(listPub) listPub.innerHTML = '<div style="padding:10px; text-align:center;"><div class="spinner"></div></div>';
     
     const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
-    const currentSlug = localStorage.getItem('tb_team_slug'); // Check active team
+    const currentSlug = localStorage.getItem('tb_team_slug');
+    const currentSort = sortSelect ? sortSelect.value : 'alphabet';
+    const currentPage = window.currentPublicPage || 1;
     
-    fetch('/api/teams/list', {
+    // 1. Fetch My Teams (Always full list for now)
+    fetch('/api/teams/list?tab=my-team', {
         headers: { 'X-Device-ID': deviceId }
     })
     .then(res => res.json())
     .then(data => {
-        if(!data.success) return;
-        
-        const myTeams = [];
-        const publicTeams = [];
-        
-        data.teams.forEach(t => {
-            if(t.joined) myTeams.push(t);
-            else publicTeams.push(t);
-        });
-        
-        // 1. Render My Teams (Switcher)
-        if(listMy) {
-            if(myTeams.length === 0) {
-                listMy.innerHTML = '<div style="color:#94a3b8; font-size:0.85rem; text-align:center; padding:10px; background:#f1f5f9; border-radius:6px;">You haven\'t joined any teams yet.</div>';
-            } else {
-                let html = '';
-                myTeams.forEach(t => {
-                    const isActive = t.slug === currentSlug;
-                    let btn = '';
-                    
-                    if (isActive) {
-                         btn = `<span style="font-size:0.75rem; font-weight:700; color:#166534; background:#dcfce7; padding:2px 8px; border-radius:12px;">ACTIVE</span>`;
+        if(!data.success || !listMy) return;
+        if(data.teams.length === 0) {
+            listMy.innerHTML = '<div style="color:#94a3b8; font-size:0.85rem; text-align:center; padding:10px; background:#f1f5f9; border-radius:6px;">You haven\'t joined any teams yet.</div>';
+        } else {
+            let html = '';
+            data.teams.forEach(t => {
+                const isActive = t.slug === currentSlug;
+                let btn = '';
+                if (isActive) {
+                    btn = `<span style="font-size:0.75rem; font-weight:700; color:#166534; background:#dcfce7; padding:2px 8px; border-radius:12px;">ACTIVE</span>`;
+                } else {
+                    if(t.status === 'APPROVED' || t.status === undefined) { 
+                        btn = `<button onclick="switchTeam('${t.slug}', '${t.name}', '${t.invite_code || ''}')" style="background:#0f172a; color:white; border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
                     } else {
-                         if(t.status === 'APPROVED' || t.status === undefined) { 
-                             btn = `<button onclick="switchTeam('${t.slug}', '${t.name}', '${t.invite_code || ''}')" style="background:#0f172a; color:white; border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
-                         } else {
-                             btn = `<span style="color:#c2410c; background:#fff7ed; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid #fdba74;">Pending</span>`;
-                         }
+                        btn = `<span style="color:#c2410c; background:#fff7ed; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid #fdba74;">Pending</span>`;
                     }
-                    
-                    const privacyBadge = t.is_public 
-                        ? '<span style="font-size:0.65rem; background:#e0f2fe; color:#0284c7; padding:2px 6px; border-radius:10px; border:1px solid #bae6fd;">PUBLIC</span>' 
-                        : '<span style="font-size:0.65rem; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:10px; border:1px solid #cbd5e1;">PRIVATE</span>';
-                    
-                    html += `
-                        <div style="background:white; border:1px solid ${isActive ? '#166534' : '#e2e8f0'}; padding:10px; border-radius:8px; display:flex; justify-content:space-between; align-items:center;">
-                            <div>
-                                <div style="display:flex; align-items:center; gap:6px;">
-                                    <span style="font-weight:700; color:#334155; font-size:0.9rem;">${t.name}</span>
-                                    ${privacyBadge}
-                                </div>
-                                <div style="font-size:0.75rem; color:#64748b; margin-top:2px; display:flex; align-items:center; gap:8px;">
-                                    <span>👥 ${t.member_count} members</span>
-                                    ${t.invite_code ? `
-                                        <span style="color:#0369a1; background:#f0f9ff; padding:1px 6px; border-radius:4px; font-family:monospace; font-weight:700; border:1px dashed #0ea5e9; cursor:pointer;" onclick="event.stopPropagation(); navigator.clipboard.writeText('${t.invite_code}'); showToast('Code Copied!');" title="Click to copy">
-                                          ${t.invite_code}
-                                        </span>
-                                    ` : ''}
-                                </div>
-                            </div>
-                            <div>${btn}</div>
-                        </div>
-                    `;
-                });
-                listMy.innerHTML = html;
-            }
-        }
-        
-        // 2. Render Public Directory
-        if(listPub) {
-            if(publicTeams.length === 0) {
-                listPub.innerHTML = '<div style="padding:10px; color:#94a3b8; text-align:center;">No other public teams found.</div>';
-            } else {
-                let html = '';
-                publicTeams.forEach(t => {
-                    const privacyBadge = t.is_public 
-                        ? '<span style="font-size:0.65rem; background:#e0f2fe; color:#0284c7; padding:2px 6px; border-radius:10px; border:1px solid #bae6fd;">PUBLIC</span>'
-                        : '<span style="font-size:0.65rem; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:10px; border:1px solid #cbd5e1;">PRIVATE</span>';
-
-                    html += `
-                      <div class="team-list-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid #f1f5f9;">
-                          <div>
-                              <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
-                                <div style="font-weight:600; color:#334155;">${t.name}</div>
+                }
+                const privacyBadge = t.is_public 
+                    ? '<span style="font-size:0.65rem; background:#e0f2fe; color:#0284c7; padding:2px 6px; border-radius:10px; border:1px solid #bae6fd;">PUBLIC</span>' 
+                    : '<span style="font-size:0.65rem; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:10px; border:1px solid #cbd5e1;">PRIVATE</span>';
+                
+                html += `
+                    <div style="background:white; border:1px solid ${isActive ? '#166534' : '#e2e8f0'}; padding:10px; border-radius:8px; display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <span style="font-weight:700; color:#334155; font-size:0.9rem;">${t.name}</span>
                                 ${privacyBadge}
-                              </div>
-                              <div style="font-size:0.75rem; color:#64748b;">👥 ${t.member_count} members</div>
+                            </div>
+                            <div style="font-size:0.75rem; color:#64748b; margin-top:2px; display:flex; align-items:center; gap:8px;">
+                                <span>👥 ${t.member_count} members</span>
+                                ${t.invite_code ? `
+                                    <span style="color:#0369a1; background:#f0f9ff; padding:1px 6px; border-radius:4px; font-family:monospace; font-weight:700; border:1px dashed #0ea5e9; cursor:pointer;" onclick="event.stopPropagation(); navigator.clipboard.writeText('${t.invite_code}'); showToast('Code Copied!');" title="Click to copy">
+                                      ${t.invite_code}
+                                    </span>
+                                ` : ''}
+                            </div>
+                        </div>
+                        <div>${btn}</div>
+                    </div>
+                `;
+            });
+            listMy.innerHTML = html;
+        }
+    });
+
+    // 2. Fetch Directory (Paginated & Sorted)
+    fetch(`/api/teams/list?tab=directory&sort=${currentSort}&page=${currentPage}&limit=10`, {
+        headers: { 'X-Device-ID': deviceId }
+    })
+    .then(res => res.json())
+    .then(data => {
+        if(!data.success || !listPub) return;
+        
+        // Handle Empty State
+        if(data.teams.length === 0) {
+            listPub.innerHTML = '<div style="padding:20px; color:#94a3b8; text-align:center;">No public teams found.</div>';
+            if(pagDiv) pagDiv.style.display = 'none';
+        } else {
+            let html = '';
+            data.teams.forEach(t => {
+                const privacyBadge = '<span style="font-size:0.65rem; background:#e0f2fe; color:#0284c7; padding:2px 6px; border-radius:10px; border:1px solid #bae6fd;">PUBLIC</span>';
+                let btn = '';
+                if (t.joined) {
+                    btn = `<button disabled style="background:#f1f5f9; border:1px solid #e2e8f0; color:#94a3b8; border-radius:4px; padding:4px 10px; cursor:default; font-size:0.75rem;">Joined</button>`;
+                } else {
+                    btn = `<button onclick="joinTeam('${t.slug}')" style="background:white; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:0.75rem;">Join</button>`;
+                }
+
+                html += `
+                  <div class="team-list-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid #f1f5f9;">
+                      <div>
+                          <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
+                            <div style="font-weight:600; color:#334155;">${t.name}</div>
+                            ${privacyBadge}
                           </div>
-                          <div>
-                              <button onclick="joinTeam('${t.slug}')" style="background:white; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:0.75rem;">Join</button>
-                          </div>
+                          <div style="font-size:0.75rem; color:#64748b;">👥 ${t.member_count} members</div>
                       </div>
-                    `;
-                });
-                listPub.innerHTML = html;
+                      <div>${btn}</div>
+                  </div>
+                `;
+            });
+            listPub.innerHTML = html;
+
+            // Update Pagination UI
+            if(pagDiv) {
+                pagDiv.style.display = data.total_pages > 1 ? 'flex' : 'none';
+                if(pagInfo) pagInfo.innerText = `Page ${data.current_page} / ${data.total_pages}`;
+                
+                // Disable/Enable buttons
+                const prevBtn = document.getElementById('prevTeamPage');
+                const nextBtn = document.getElementById('nextTeamPage');
+                if(prevBtn) prevBtn.disabled = data.current_page <= 1;
+                if(nextBtn) nextBtn.disabled = data.current_page >= data.total_pages;
+                
+                if(prevBtn) prevBtn.style.opacity = prevBtn.disabled ? '0.3' : '1';
+                if(nextBtn) nextBtn.style.opacity = nextBtn.disabled ? '0.3' : '1';
             }
         }
     });

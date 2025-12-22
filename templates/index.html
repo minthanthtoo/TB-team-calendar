@@ -520,16 +520,25 @@
                   <button onclick="loadTeams()" style="background:#f1f5f9; border:1px solid #e2e8f0; border-radius:4px; padding:2px 8px; cursor:pointer;">↻ Refresh</button>
               </div>
               
-              <input type="text" id="searchTeamInput" placeholder="Search public teams..." class="form-control" style="margin-bottom: 10px;">
+              <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                  <input type="text" id="searchTeamInput" placeholder="Search teams..." class="form-control" style="flex:2;">
+                  <select id="teamSortSelect" class="form-control" style="flex:1.5; font-size: 0.85rem;" onchange="loadTeams()">
+                      <option value="alphabet">A-Z</option>
+                      <option value="created">Newest</option>
+                      <option value="active">Active</option>
+                      <option value="count">Members</option>
+                  </select>
+              </div>
               
-              <div id="publicTeamsList" style="max-height: 200px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 10px;">
+              <div id="publicTeamsList" style="max-height: 250px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 10px;">
                   <div style="padding: 1rem; text-align: center; color: #94a3b8">Loading...</div>
               </div>
               
-              <!-- Pagination / Create -->
-              <div style="text-align:center; margin-bottom: 1.5rem;">
-                  <!-- Simple Load More (Client Side Logic) -->
-                  <span style="font-size:0.8rem; color:#94a3b8;">Showing top results</span>
+              <!-- Pagination -->
+              <div id="teamPagination" style="display:none; justify-content:center; align-items:center; gap:10px; margin-bottom: 1.5rem;">
+                  <button class="btn" style="padding: 2px 8px; background:white; border:1px solid #cbd5e1;" id="prevTeamPage" onclick="changePublicPage(-1)">←</button>
+                  <span id="teamPageInfo" style="font-size:0.85rem; color:#475569; font-weight:600;">Page 1 / 1</span>
+                  <button class="btn" style="padding: 2px 8px; background:white; border:1px solid #cbd5e1;" id="nextTeamPage" onclick="changePublicPage(1)">→</button>
               </div>
               
               <!-- Join Existing -->

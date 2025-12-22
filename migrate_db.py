@@ -65,10 +65,24 @@ def migrate():
                 user_name VARCHAR(100) NOT NULL,
                 device_id VARCHAR(100),
                 status VARCHAR(20) DEFAULT 'PENDING',
+                role VARCHAR(20) DEFAULT 'MEMBER',
                 updated_at TIMESTAMP,
                 FOREIGN KEY(team_slug) REFERENCES team(slug)
             )
         ''')
+        # Check if we need to add column (for existing tables)
+        try:
+             c.execute("ALTER TABLE team_member ADD COLUMN role VARCHAR(20) DEFAULT 'MEMBER'")
+             print("Added team_member.role")
+        except:
+             pass
+
+        try:
+             c.execute("ALTER TABLE team_member ADD COLUMN updated_at TIMESTAMP")
+             print("Added team_member.updated_at")
+        except:
+             pass
+        
         print("Ensured team_member table")
     except Exception as e:
         print(f"Error checking team_member table: {e}")

@@ -52,6 +52,7 @@ class Team(db.Model):
     invite_code = db.Column(db.String(20), unique=True)
     is_public = db.Column(db.Boolean, default=False) # New: Public/Private toggle
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 # ...
 
@@ -873,47 +874,69 @@ def join_team():
 
 @app.route("/api/teams/list", methods=["GET"])
 def list_teams():
-    # Return Public Teams OR My Teams
     requester_device = request.headers.get('X-Device-ID')
-    
-    # 1. Get Public Teams
-    public_teams = Team.query.filter_by(is_public=True).all()
-    
-    # 2. Get My Teams (if device ID provided)
+    tab = request.args.get('tab', 'directory')
+    sort_by = request.args.get('sort', 'alphabet')
+    page = int(request.args.get('page', 1))
+    limit = int(request.args.get('limit', 10))
+
+    # 1. Get My Joins (for membership status/codes)
     my_teams_slugs = set()
     if requester_device:
         memberships = TeamMember.query.filter_by(device_id=requester_device).all()
         my_teams_slugs = {m.team_slug for m in memberships}
-        
-    combined_list = {}
+
+    if tab == 'my-team':
+        # List all joined teams (no pagination for now as it's usually small)
+        teams = Team.query.filter(Team.slug.in_(my_teams_slugs)).all()
+        result_teams = []
+        for t in teams:
+            result_teams.append({
+                "slug": t.slug, "name": t.name, 
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "is_public": t.is_public,
+                "joined": True,
+                "member_count": TeamMember.query.filter_by(team_slug=t.slug).count(),
+                "invite_code": t.invite_code
+            })
+        return jsonify(success=True, teams=result_teams, total_pages=1, current_page=1)
+
+    # 2. Directory Tab (Public Teams - Paginated & Sorted)
+    query = db.session.query(Team, db.func.count(TeamMember.id).label('m_count'))\
+        .outerjoin(TeamMember, Team.slug == TeamMember.team_slug)\
+        .filter(Team.is_public == True)\
+        .group_by(Team.id)
+
+    if sort_by == 'created':
+        query = query.order_by(Team.created_at.desc())
+    elif sort_by == 'active':
+        query = query.order_by(Team.updated_at.desc())
+    elif sort_by == 'count':
+        query = query.order_by(db.desc('m_count'))
+    else: # alphabet
+        query = query.order_by(Team.name.asc())
+
+    pagination = query.paginate(page=page, per_page=limit, error_out=False)
     
-    # Add Public
-    for t in public_teams:
+    result_teams = []
+    for t, m_count in pagination.items:
         is_joined = t.slug in my_teams_slugs
-        combined_list[t.slug] = {
+        result_teams.append({
             "slug": t.slug, "name": t.name, 
-            "created_at": t.created_at.isoformat(),
+            "created_at": t.created_at.isoformat() if t.created_at else None,
             "is_public": True,
             "joined": is_joined,
-            "member_count": TeamMember.query.filter_by(team_slug=t.slug).count(),
+            "member_count": m_count,
             "invite_code": t.invite_code if is_joined else None
-        }
-        
-    # Add My Private Teams
-    for slug in my_teams_slugs:
-        if slug not in combined_list:
-            t = Team.query.filter_by(slug=slug).first()
-            if t:
-                combined_list[slug] = {
-                    "slug": t.slug, "name": t.name, 
-                    "created_at": t.created_at.isoformat(),
-                    "is_public": t.is_public,
-                    "joined": True,
-                    "member_count": TeamMember.query.filter_by(team_slug=t.slug).count(),
-                    "invite_code": t.invite_code
-                }
-                
-    return jsonify(success=True, teams=list(combined_list.values()))
+        })
+
+    return jsonify(
+        success=True, 
+        teams=result_teams, 
+        total_pages=pagination.pages, 
+        current_page=pagination.page,
+        total_count=pagination.total
+    )
 
 @app.route("/api/teams/members", methods=["GET"])
 def list_pending_members():
