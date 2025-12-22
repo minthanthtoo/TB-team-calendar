@@ -19,12 +19,14 @@ class DeletedRecord(db.Model):
 class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     uid = db.Column(db.String(36), unique=True, default=lambda: str(uuid.uuid4())) # Unique Sync ID
+    team_id = db.Column(db.String(50), default='DEFAULT') # <-- For Multi-Team Management
     name = db.Column(db.String(100), nullable=False)
     age = db.Column(db.Integer, nullable=False)
     sex = db.Column(db.String(10), nullable=False)
     address = db.Column(db.String(200))
     regime = db.Column(db.String(50), nullable=False)
     remark = db.Column(db.String(500))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow) # Sync Timestamp
     events = db.relationship("Event", backref="patient", lazy=True, cascade="all, delete-orphan")
 
 class Event(db.Model):
@@ -33,6 +35,7 @@ class Event(db.Model):
     start = db.Column(db.String(20))
     color = db.Column(db.String(20))
     patient_id = db.Column(db.Integer, db.ForeignKey("patient.id"))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow) # Sync Timestamp
 
     # New fields for per-milestone data
     missed_days = db.Column(db.Integer, default=0)
@@ -40,6 +43,22 @@ class Event(db.Model):
     outcome = db.Column(db.String(20))  # e.g., Failed, LTFU, Died, Cured, Completed
 
     original_start = db.Column(db.String(20))  # store original planned date
+
+# ---- TEAM MODELS ----
+class Team(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(50), unique=True, nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class TeamMember(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    team_slug = db.Column(db.String(50), nullable=False) # e.g. "ygn-team"
+    user_name = db.Column(db.String(100), nullable=False) # e.g. "Dr. Smith" or Device Name
+    device_id = db.Column(db.String(100)) # Unique Device/Browser ID
+    status = db.Column(db.String(20), default='PENDING') # PENDING, APPROVED
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 import socket
 
@@ -104,7 +123,8 @@ def add_patient():
         sex=request.form["sex"],
         address=request.form["address"],
         regime=request.form["regime"],
-        remark=request.form["remark"]
+        remark=request.form["remark"],
+        team_id=request.form.get("team_id", "DEFAULT") # Capture Team ID
     )
     db.session.add(p)
     db.session.commit()
@@ -281,13 +301,22 @@ def delete_patient(patient_id):
 # 1. Export Data (Host gives data to Guest)
 @app.route("/api/get_all_data")
 def get_all_data():
-    patients = Patient.query.all()
+    target_team = request.args.get('team')
+    
+    query = Patient.query
+    if target_team and target_team != 'ALL':
+        # Filter patients by team
+        query = query.filter_by(team_id=target_team)
+        
+    patients = query.all()
     deleted = DeletedRecord.query.all()
     
     data = []
     for p in patients:
         p_data = {
             "uid": p.uid,
+            "team_id": p.team_id,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             "name": p.name, "age": p.age, "sex": p.sex, 
             "address": p.address, "regime": p.regime, "remark": p.remark,
             "events": []
@@ -295,6 +324,7 @@ def get_all_data():
         for e in p.events:
             p_data["events"].append({
                 "id": e.id,
+                "updated_at": e.updated_at.isoformat() if e.updated_at else None,
                 "title": e.title, "start": e.start, "original_start": e.original_start,
                 "color": e.color, "missed_days": e.missed_days, 
                 "remark": e.remark, "outcome": e.outcome
@@ -590,3 +620,84 @@ if __name__ == "__main__":
     with app.app_context():
         db.create_all()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
+# ---- TEAM MANAGEMENT API ----
+
+@app.route("/api/teams/create", methods=["POST"])
+def create_team():
+    data = request.json
+    name = data.get("name")
+    if not name: return jsonify(success=False, message="Name required"), 400
+    
+    # Simple Slugify
+    slug = name.lower().replace(" ", "-")
+    
+    if Team.query.filter_by(slug=slug).first():
+       return jsonify(success=False, message="Team name taken"), 400
+       
+    new_team = Team(name=name, slug=slug)
+    db.session.add(new_team)
+    
+    # Auto-approve creator (if we had auth, we'd link user. For now, create a 'Device Admin' member?)
+    # Assuming the device creating it is the 'Owner'.
+    device_id = data.get("device_id", "Unknown")
+    user_name = data.get("user_name", "Admin")
+    
+    member = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status='APPROVED')
+    db.session.add(member)
+    
+    db.session.commit()
+    return jsonify(success=True, team_slug=slug)
+
+@app.route("/api/teams/join", methods=["POST"])
+def join_team():
+    data = request.json
+    slug = data.get("slug")
+    user_name = data.get("user_name")
+    device_id = data.get("device_id")
+    
+    team = Team.query.filter_by(slug=slug).first()
+    if not team: return jsonify(success=False, message="Team not found"), 404
+    
+    # Check existing
+    existing = TeamMember.query.filter_by(team_slug=slug, device_id=device_id).first()
+    if existing:
+        return jsonify(success=True, status=existing.status, message="Already requested")
+        
+    new_mem = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status='PENDING')
+    db.session.add(new_mem)
+    db.session.commit()
+    
+    return jsonify(success=True, status='PENDING')
+
+@app.route("/api/teams/list", methods=["GET"])
+def list_teams():
+    # Public list of teams so users can search
+    teams = Team.query.all()
+    return jsonify(success=True, teams=[{"name": t.name, "slug": t.slug} for t in teams])
+
+@app.route("/api/teams/members", methods=["GET"])
+def list_pending_members():
+    # Logic: Only admins can see this. For now, we allow any device to peek 
+    # (In prod, check if requester device_id is APPROVED for this team or is CREATOR)
+    slug = request.args.get('slug')
+    members = TeamMember.query.filter_by(team_slug=slug).all()
+    
+    return jsonify(success=True, members=[
+        {"id": m.id, "user_name": m.user_name, "device_id": m.device_id, "status": m.status}
+        for m in members
+    ])
+
+@app.route("/api/teams/approve", methods=["POST"])
+def approve_member():
+    data = request.json
+    member_id = data.get("member_id")
+    action = data.get("action", "APPROVE") # APPROVE or REJECT
+    
+    mem = TeamMember.query.get(member_id)
+    if not mem: return jsonify(success=False, message="Not found"), 404
+    
+    mem.status = 'APPROVED' if action == 'APPROVE' else 'REJECTED'
+    db.session.commit()
+    return jsonify(success=True, status=mem.status)
+

@@ -320,7 +320,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Helper to refresh data and then update detail view
   window.refreshPatientDataAndUI = function(targetUid) {
-      fetch('/api/get_all_data')
+      const team = localStorage.getItem('tb_team_slug') || '';
+      const url = team ? `/api/get_all_data?team=${team}` : '/api/get_all_data';
+      
+      fetch(url)
       .then(res => res.json())
       .then(data => {
           if(data.success) {
@@ -926,7 +929,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // -- Dynamic Dashboard Logic --
 window.updateDashboardCounts = function() {
-    fetch('/api/get_all_data')
+    const teamSlug = localStorage.getItem('tb_team_slug') || 'DEFAULT';
+    fetch(`/api/get_all_data?team=${teamSlug}`)
     .then(res => res.json())
     .then(data => {
         if(data.success) {
@@ -985,7 +989,10 @@ window.openPatientList = function(initialFilter = 'all') {
     
     document.getElementById('patientListContainer').innerHTML = '<div style="padding:20px; text-align:center;"><span class="spinner"></span> Loading...</div>';
     
-    fetch('/api/get_all_data')
+    const team = localStorage.getItem('tb_team_slug') || '';
+    const url = team ? `/api/get_all_data?team=${team}` : '/api/get_all_data';
+
+    fetch(url)
     .then(res => res.json())
     .then(data => {
         if(data.success) {
@@ -1377,3 +1384,223 @@ window.adjustMissed = function(delta) {
     // Trigger input event to update date preview
     input.dispatchEvent(new Event('input'));
 }
+
+// --- FORM HANDLING ---
+const patientForm = document.getElementById('patientForm');
+if(patientForm) {
+    patientForm.addEventListener('submit', function(e) {
+        // Inject current team ID
+        const teamSlug = localStorage.getItem('tb_team_slug') || 'DEFAULT';
+        const teamInput = document.getElementById('patient_team_id');
+        if(teamInput) teamInput.value = teamSlug;
+    });
+}
+
+// --- Team Management Logic ---
+document.addEventListener('DOMContentLoaded', () => {
+    const teamsBtn = document.getElementById('teamsBtn');
+    const teamsModal = document.getElementById('teamsModal');
+    const closeTeamsBtn = document.getElementById('closeTeamsModal');
+    
+    if(teamsBtn) {
+        teamsBtn.addEventListener('click', () => {
+            teamsModal.style.display = 'flex'; // Centered
+            loadTeams();
+            updateMyTeamUI();
+        });
+    }
+    
+    if(closeTeamsBtn) closeTeamsBtn.onclick = () => teamsModal.style.display = 'none';
+    
+    // Create Team
+    const createBtn = document.getElementById('createTeamBtn');
+    if(createBtn) {
+        createBtn.onclick = () => {
+             const name = document.getElementById('newTeamName').value;
+             if(!name) return showToast("Enter a team name", "error");
+             
+             createBtn.innerHTML = "Creating... <span class='spinner'></span>";
+             createBtn.disabled = true;
+             
+             const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+             
+             fetch('/api/teams/create', {
+                 method: 'POST',
+                 headers: {'Content-Type': 'application/json'},
+                 body: JSON.stringify({ name: name, user_name: 'Admin', device_id: deviceId })
+             })
+             .then(res => res.json())
+             .then(data => {
+                 createBtn.innerHTML = "Create";
+                 createBtn.disabled = false;
+                 if(data.success) {
+                     showToast("Team Created! You are now admin.");
+                     localStorage.setItem('tb_team_slug', data.team_slug);
+                     localStorage.setItem('tb_team_name', name);
+                     updateMyTeamUI();
+                     loadTeams(); // Refresh list
+                 } else {
+                     showToast(data.message, "error");
+                 }
+             });
+        };
+    }
+    
+    // Search Filter
+    const searchInp = document.getElementById('searchTeamInput');
+    if(searchInp) {
+        searchInp.addEventListener('input', (e) => {
+             const term = e.target.value.toLowerCase();
+             document.querySelectorAll('.team-list-item').forEach(item => {
+                 const txt = item.innerText.toLowerCase();
+                 item.style.display = txt.includes(term) ? 'flex' : 'none';
+             });
+        });
+    }
+
+    // --- PREMIUM UI: Sidebar Search ---
+    const registrySearch = document.getElementById('registrySearch');
+    if(registrySearch) {
+        registrySearch.addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase();
+            document.querySelectorAll('#registryList .patient-item').forEach(item => {
+                const name = item.dataset.name || "";
+                const uid = (item.dataset.uid || "").toLowerCase();
+                if(name.includes(term) || uid.includes(term)) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        });
+    }
+
+    // --- PREMIUM UI: Progress Bars ---
+    setTimeout(updateSidebarProgress, 500);
+});
+
+window.updateSidebarProgress = function() {
+    const today = new Date();
+    document.querySelectorAll('#registryList .patient-item').forEach(item => {
+        const startStr = item.dataset.start;
+        const regime = item.dataset.regime;
+        const uid = item.dataset.uid;
+        
+        if(!startStr) return;
+        
+        const startDate = new Date(startStr);
+        // Estimate total days based on regime
+        let totalDays = 168; // 6 months default (IR/CR)
+        if(regime === 'RR') totalDays = 240; // 8 months
+        
+        const diffTime = Math.abs(today - startDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+        
+        // Cap at 100%
+        let pct = Math.min(100, Math.max(0, (diffDays / totalDays) * 100));
+        
+        // Update UI
+        const bar = document.getElementById(`progress-${uid}`);
+        const text = document.getElementById(`progress-text-${uid}`);
+        
+        if(bar) {
+            bar.style.width = `${pct}%`;
+            // Color based on completion
+            if(pct < 25) bar.style.backgroundColor = '#3b82f6'; // Start
+            else if(pct < 75) bar.style.backgroundColor = '#f59e0b'; // Middle
+            else bar.style.backgroundColor = '#10b981'; // End
+        }
+        
+        if(text) {
+            // Months elapsed
+            const months = (diffDays / 30).toFixed(1);
+            text.innerText = `${months}m / ${(totalDays/30).toFixed(0)}m`;
+        }
+    });
+}
+
+window.loadTeams = function() {
+    const list = document.getElementById('teamsList');
+    list.innerHTML = '<div style="text-align:center; padding:10px;"><span class="spinner"></span></div>';
+    
+    fetch('/api/teams/list')
+    .then(res => res.json())
+    .then(data => {
+        if(!data.success) return;
+        if(data.teams.length === 0) {
+            list.innerHTML = '<div style="padding:10px; color:#94a3b8; text-align:center;">No teams found. Create one!</div>';
+            return;
+        }
+        
+        let html = '';
+        const mySlug = localStorage.getItem('tb_team_slug');
+        
+        data.teams.forEach(t => {
+            const isMine = t.slug === mySlug;
+            const btn = isMine 
+               ? '<span class="badge badge-completed">Joined</span>'
+               : `<button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="joinTeam('${t.slug}')">Join</button>`;
+               
+            html += `
+              <div class="team-list-item" style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid #f1f5f9;">
+                  <div>
+                      <div style="font-weight:600; color:#334155;">${t.name}</div>
+                      <div style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">${t.slug}</div>
+                  </div>
+                  <div>${btn}</div>
+              </div>
+            `;
+        });
+        list.innerHTML = html;
+    });
+}
+
+window.joinTeam = function(slug) {
+    const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+    if(confirm("Request to join this team? Admin approval will be required.")) {
+        fetch('/api/teams/join', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ slug: slug, user_name: deviceId, device_id: deviceId })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                if(data.status === 'APPROVED') {
+                     showToast("Joined successfully!");
+                     localStorage.setItem('tb_team_slug', slug);
+                     updateMyTeamUI();
+                } else {
+                     showToast("Request Sent! Waiting for Admin Approval.");
+                }
+            } else {
+                showToast(data.message, "error");
+            }
+        });
+    }
+}
+
+window.updateMyTeamUI = function() {
+    const slug = localStorage.getItem('tb_team_slug');
+    const name = localStorage.getItem('tb_team_name') || slug;
+    
+    const display = document.getElementById('myTeamDisplay');
+    const desc = document.getElementById('myTeamDesc');
+    const badge = document.getElementById('teamBadge');
+    
+    if(slug) {
+        if(display) display.innerText = name;
+        if(desc) desc.innerText = "You are syncing data for this team only.";
+        if(badge) {
+            badge.style.display = 'inline-block';
+            badge.innerText = slug.slice(0,3).toUpperCase();
+        }
+    } else {
+        if(display) display.innerText = "Default (Public)";
+        if(desc) desc.innerText = "You are viewing/syncing all public data.";
+        if(badge) badge.style.display = 'none';
+    }
+}
+
+// Initial check
+document.addEventListener('DOMContentLoaded', () => { setTimeout(window.updateMyTeamUI, 500); });

@@ -43,6 +43,26 @@
             margin-bottom: 4px;
           "
         >
+          <!-- Teams Button -->
+          <button
+            id="teamsBtn"
+            style="
+              border: none;
+              background: #ecfdf5;
+              color: #059669;
+              font-size: 0.75rem;
+              font-weight: 600;
+              padding: 2px 8px;
+              border-radius: 12px;
+              cursor: pointer;
+              display: flex;
+              align-items: center;
+              gap: 4px;
+            "
+          >
+            👥 Teams
+          </button>
+          
           <!-- Sync Button -->
           <button
             id="wifiSyncBtn"
@@ -159,6 +179,7 @@
           style="margin-top: 10px"
         >
           <h3 style="color: var(--primary)">New Patient Enrollment</h3>
+          <input type="hidden" id="patient_team_id" name="team_id" value="">
 
           <div class="form-grid">
             <div class="form-group">
@@ -331,7 +352,9 @@
               class="patient-item"
               data-name="{{ p.name|lower }}"
               data-uid="{{ p.uid }}"
-              style="border-left-color: {{ p.events[0].color }}"
+              data-start="{{ p.events[0].start if p.events else '' }}"
+              data-regime="{{ p.regime }}"
+              style="border-left-color: {{ p.events[0].color if p.events else '#cbd5e1' }}"
             >
               <div
                 style="
@@ -352,8 +375,13 @@
                   </div>
                 </div>
                 <div class="patient-status" id="status-{{ p.uid }}">
-                  <!-- Injected by JS -->
-                  <span class="badge badge-loading">...</span>
+                  {% set last_event = p.events|sort(attribute='start')|last %}
+                  {% if not last_event or not last_event.outcome %}
+                      <span class="badge badge-active">Active</span>
+                  {% else %}
+                      {% set out = last_event.outcome %}
+                      <span class="badge" style="background: {{ '#dcfce7' if out in ['Cured', 'Completed'] else '#fee2e2' }}; color: {{ '#166534' if out in ['Cured', 'Completed'] else '#991b1b' }};">{{ out }}</span>
+                  {% endif %}
                 </div>
               </div>
 
@@ -401,6 +429,40 @@
 
     <!-- Toast Container -->
     <div id="toast-container"></div>
+
+  <!-- Teams Modal -->
+  <div id="teamsModal" class="modal-overlay" style="z-index: 1050; display: none;">
+    <div class="modal-content" style="max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h4>Team Management</h4>
+        <button id="closeTeamsModal" class="close-btn">&times;</button>
+      </div>
+      <div style="padding: 1.5rem; overflow-y: auto;">
+        
+        <!-- Current Team Status -->
+        <div id="currentTeamSection" style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 1rem; border-radius: 8px; margin-bottom: 2rem;">
+            <div style="font-size: 0.75rem; color: #15803d; font-weight: 700; text-transform: uppercase;">Current Status</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: #166534;" id="myTeamDisplay">Default (Public)</div>
+            <div style="font-size: 0.85rem; color: #15803d; margin-top: 5px;" id="myTeamDesc">You are viewing/syncing all public data.</div>
+        </div>
+
+        <div class="form-section-title">🚀 Create New Team</div>
+        <div style="display: flex; gap: 10px; margin-bottom: 2rem;">
+            <input type="text" id="newTeamName" placeholder="e.g. Mandalay Alpha Unit" style="flex: 1;">
+            <button id="createTeamBtn" class="btn">Create</button>
+        </div>
+
+        <div class="form-section-title">🤝 Join Existing Team</div>
+        <div style="margin-bottom: 1rem;">
+             <input type="text" id="searchTeamInput" placeholder="Search teams..." style="width: 100%; margin-bottom: 10px;">
+             <div id="teamsList" style="max-height: 200px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.5rem;">
+                 <div style="padding: 1rem; text-align: center; color: #94a3b8;">Loading teams...</div>
+             </div>
+        </div>
+      
+      </div>
+    </div>
+  </div>
 
     <!-- Event Modal (Dialog) -->
     <div id="eventModal" class="modal-overlay" style="z-index: 1010">

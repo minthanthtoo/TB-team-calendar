@@ -82,8 +82,14 @@ header h1 {
   gap: 1.5rem;
 }
 
+/* On Mobile/Tablet Portrait: Sidebar First */
+#legend {
+    order: -1; 
+    margin-bottom: 1rem;
+}
+
 /* Tablet Landscape & Desktop */
-@media (min-width: 900px) {
+@media (min-width: 768px) {
   .main-layout {
     display: grid;
     /* Calendar takes available space, Sidebar is fixed width */
@@ -93,6 +99,7 @@ header h1 {
   }
   
   #legend {
+    order: 0; /* Reset order for grid layout */
     margin-bottom: 0;
     max-height: calc(100vh - 120px); /* Fit to viewport height */
     overflow-y: auto;
@@ -706,4 +713,11 @@ input:focus, select:focus, textarea:focus {
     .modal-header, .modal-footer {
         flex-shrink: 0;
     }
+}
+
+/* Sabbath Highlighting */
+.fc-day-sabbath {
+    background-color: #f8fafc !important;
+    background-image: linear-gradient(45deg, #f1f5f9 25%, transparent 25%, transparent 50%, #f1f5f9 50%, #f1f5f9 75%, transparent 75%, transparent) !important;
+    background-size: 10px 10px !important;
 }
