@@ -556,7 +556,54 @@ document.addEventListener('DOMContentLoaded', function() {
       }
   }
 
-  // fetchFromHost remains same...
+  window.fetchFromHost = function(action) {
+      const host = window.getHostUrl();
+      const statusDiv = document.getElementById('connectionStatus');
+      
+      if (!host) { showToast("Please enter Host IP", "error"); return; }
+      
+      statusDiv.style.display = 'block';
+      statusDiv.innerHTML = `<span class="spinner"></span> Fetching from ${host}...`;
+      
+      // We are fetching ALL data from host
+      fetch(`${host}/api/get_all_data`)
+      .then(res => res.json())
+      .then(data => {
+          if (!data.success) throw new Error(data.message || "Host Error");
+          
+          statusDiv.innerHTML = `Received ${data.data.length} records. Merging...`;
+          
+          // Send to our OWN backend to merge
+          return fetch('/api/merge_data', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                  source_device: "HOST_SYNC",
+                  data: data.data,
+                  deleted: data.deleted,
+                  strategy: action // 'APPEND' or 'REPLACE'
+              })
+          });
+      })
+      .then(res => res.json())
+      .then(res => {
+          if(res.success) {
+              showToast(`Sync Complete! Added/Updated: ${res.added}, Deleted: ${res.deleted}`);
+              statusDiv.innerHTML = `✅ Sync Success! Reloading...`;
+              statusDiv.style.color = 'var(--success)';
+              // Reload to update views
+              setTimeout(() => window.location.reload(), 1500);
+          } else {
+              throw new Error(res.message);
+          }
+      })
+      .catch(err => {
+          console.error(err);
+          statusDiv.innerHTML = `❌ Sync Failed: ${err.message}`;
+          statusDiv.style.color = 'var(--danger)';
+          showToast(err.message, "error");
+      });
+  }
 
   window.pushToHost = function() {
           const host = window.getHostUrl();
@@ -736,9 +783,10 @@ document.addEventListener('DOMContentLoaded', function() {
           .then(res => res.json())
           .then(data => {
                if(data.success) {
-                  showToast(`Merged ${data.count} records successfully!`);
+                  showToast(`Merged ${data.count} records! Reloading...`);
                   checkIncoming(window.selectedDevice);
-                  // Reload if essential
+                  // Reload to update Calendar/Lists
+                  setTimeout(() => window.location.reload(), 1500);
                } else {
                    showToast("Error: " + data.message, "error");
                }
@@ -748,8 +796,284 @@ document.addEventListener('DOMContentLoaded', function() {
 
 });
 
-window.updateMergeCount = function() {
-    const checks = document.querySelectorAll('.sync-check:checked');
-    const btn = document.getElementById('mergeBtn');
-    if(btn) btn.textContent = `Merge Selected (${checks.length})`;
+// -- Dynamic Dashboard Logic --
+window.updateDashboardCounts = function() {
+    fetch('/api/get_all_data')
+    .then(res => res.json())
+    .then(data => {
+        if(data.success) {
+            window.allPatientData = data.data; // Sync global store
+            
+            const total = data.data.length;
+            let active = 0;
+            let cured = 0;
+            
+            data.data.forEach(p => {
+                // Sort events to find the true chronological last event
+                // (Safeguard against unsorted server data)
+                const sortedEvents = [...p.events].sort((a,b) => new Date(a.start) - new Date(b.start));
+                const lastEvent = sortedEvents.length > 0 ? sortedEvents[sortedEvents.length-1] : null;
+                
+                if(!lastEvent) {
+                    // No events yet = Active (just enrolled)
+                    active++;
+                } else {
+                    const out = (lastEvent.outcome || "").trim();
+                    if(out === "") {
+                        // Ongoing = Active
+                        active++;
+                    } else if (out === 'Cured' || out === 'Completed') {
+                        // Cured/Completed
+                        cured++;
+                    }
+                    // 'Died', 'Failed', 'LTFU' are not counted in Active or Cured
+                }
+            });
+            
+            const totalEl = document.getElementById('totalCount');
+            const activeEl = document.getElementById('activeCount');
+            const curedEl = document.getElementById('curedCount');
+            const headerEl = document.getElementById('headerCount');
+            
+            if(totalEl) totalEl.innerText = total;
+            if(activeEl) activeEl.innerText = active;
+            if(curedEl) curedEl.innerText = cured;
+            if(headerEl) headerEl.innerText = total;
+        }
+    })
+    .catch(err => console.error("Dashboard update failed", err));
 }
+
+// -- Patient List & Detail View Logic --
+window.allPatientData = [];
+
+window.openPatientList = function(initialFilter = 'all') {
+    const modal = document.getElementById('patientListModal');
+    modal.style.display = 'block';
+    
+    // Set filter if provided, otherwise default to all
+    const filterSelect = document.getElementById('patientFilter');
+    if(filterSelect) filterSelect.value = initialFilter;
+    
+    document.getElementById('patientListContainer').innerHTML = '<div style="padding:20px; text-align:center;"><span class="spinner"></span> Loading...</div>';
+    
+    fetch('/api/get_all_data')
+    .then(res => res.json())
+    .then(data => {
+        if(data.success) {
+            window.allPatientData = data.data; // Store globally for filtering
+            renderPatientList();
+        } else {
+            document.getElementById('patientListContainer').innerHTML = `<div style="color:red; padding:20px;">Error: ${data.message}</div>`;
+        }
+    })
+    .catch(err => {
+        document.getElementById('patientListContainer').innerHTML = `<div style="color:red; padding:20px;">Network Error</div>`;
+    });
+}
+
+window.renderPatientList = function() {
+    const container = document.getElementById('patientListContainer');
+    const search = document.getElementById('patientSearch').value.toLowerCase();
+    const filter = document.getElementById('patientFilter').value;
+    const monthFilter = document.getElementById('patientMonthFilter').value; // YYYY-MM
+    const sort = document.getElementById('patientSort').value;
+    const countEl = document.getElementById('patientListCount');
+    
+    let list = [...window.allPatientData];
+    
+    // 1. Search (Name or UID)
+    if(search) {
+        list = list.filter(p => p.name.toLowerCase().includes(search) || (p.uid && p.uid.includes(search)));
+    }
+    
+    // 2. Status Filter
+    if(filter !== 'all') {
+        list = list.filter(p => {
+             // Sort to find last event
+             const sorted = [...p.events].sort((a,b) => new Date(a.start) - new Date(b.start));
+             const last = sorted.length > 0 ? sorted[sorted.length-1] : null;
+             
+             // Active = No events OR Last event has no outcome
+             const isActive = !last || !last.outcome || last.outcome.trim() === "";
+             
+             if(filter === 'active') return isActive;
+             if(filter === 'outcome') return !isActive; // Any outcome (Cured, Completed, Died, etc.)
+             if(filter === 'completed') {
+                 return last && (last.outcome === 'Cured' || last.outcome === 'Completed');
+             }
+             return true;
+        });
+    }
+
+    // 3. Month Filter (Any event in month)
+    if(monthFilter) {
+        list = list.filter(p => {
+            return p.events.some(e => e.start.startsWith(monthFilter));
+        });
+    }
+
+    // 4. Update Count
+    if(countEl) {
+        countEl.innerText = `Showing ${list.length} of ${window.allPatientData.length} patients`;
+    }
+
+    // 5. Sort
+    list.sort((a, b) => {
+        if(sort === 'name') return a.name.localeCompare(b.name);
+        if(sort === 'age') return a.age - b.age;
+        if(sort === 'newest') return 0; // Keeping as is
+        return 0;
+    });
+
+    // 6. Render
+    let html = '<div style="display:flex; flex-direction:column;">';
+    list.forEach(p => {
+        // Status Badge Logic
+        const sorted = [...p.events].sort((a,b) => new Date(a.start) - new Date(b.start));
+        const lastEvent = sorted.length > 0 ? sorted[sorted.length-1] : null;
+        
+        let statusBadge = '<span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:10px; font-size:0.7rem;">Active</span>';
+        
+        if (lastEvent && lastEvent.outcome && lastEvent.outcome.trim() !== "") {
+             const out = lastEvent.outcome;
+             let color = '#3b82f6'; // Blue default
+             if(out === 'Died' || out === 'Failed') color = '#ef4444';
+             else if (out === 'Cured' || out === 'Completed') color = '#10b981';
+             
+             statusBadge = `<span style="background:${color}20; color:${color}; padding:2px 6px; border-radius:10px; font-size:0.7rem;">${out}</span>`;
+        }
+
+        html += `
+        <div onclick="openPatientDetail('${p.uid || ''}')" style="padding:12px; border-bottom:1px solid #f1f5f9; display:flex; align-items:center; cursor:pointer; transition:background 0.2s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='transparent'">
+            <div style="width:40px; height:40px; background:#e2e8f0; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:600; color:#64748b; margin-right:12px;">
+                ${p.name.charAt(0).toUpperCase()}
+            </div>
+            <div style="flex:1;">
+                <div style="font-weight:600; color:#334155;">${p.name} <span style="font-weight:400; color:#94a3b8; font-size:0.8rem;">(${p.age}, ${p.sex})</span></div>
+                <div style="font-size:0.8rem; color:#64748b;">${p.regime} • ${p.address || 'No Address'}</div>
+            </div>
+            <div>
+               ${statusBadge}
+            </div>
+            <div style="margin-left:10px; color:#cbd5e1;">›</div>
+        </div>
+        `;
+    });
+    html += '</div>';
+    
+    if(list.length === 0) html = '<div style="padding:30px; text-align:center; color:#94a3b8;">No patients found matching filters.</div>';
+    
+    container.innerHTML = html;
+}
+
+window.openPatientDetail = function(uid) {
+    // If no UID, we have a problem (legacy data?). Try matching name? Ideally UID exists.
+    const p = window.allPatientData.find(x => x.uid === uid);
+    if(!p) return;
+
+    const modal = document.getElementById('patientDetailModal');
+    const title = document.getElementById('pdName');
+    const head = document.getElementById('pdHeader');
+    const timeline = document.getElementById('pdTimeline');
+    
+    title.innerText = p.name;
+    
+    // Header
+    head.innerHTML = `
+        <div style="flex:1;">
+            <div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Age/Sex</div>
+            <div style="font-weight:600;">${p.age} / ${p.sex}</div>
+        </div>
+        <div style="flex:1;">
+            <div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Address</div>
+            <div style="font-weight:600;">${p.address || '-'}</div>
+        </div>
+        <div style="flex:1;">
+            <div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Regime</div>
+            <div style="font-weight:600;">${p.regime}</div>
+        </div>
+    `;
+    
+    // Timeline
+    let tlHtml = '';
+    // Sort events by date
+    const events = [...p.events].sort((a,b) => new Date(a.start) - new Date(b.start));
+    
+    if(events.length === 0) {
+        tlHtml = '<div style="font-style:italic; color:#94a3b8;">No recorded events.</div>';
+    } else {
+        tlHtml = '<div style="position:relative; padding-left:20px; border-left:2px solid #e2e8f0; margin-left:10px;">';
+        events.forEach(e => {
+            const date = new Date(e.start).toLocaleDateString();
+            const color = e.color || '#cbd5e1';
+            const outcome = e.outcome ? `<span style="font-weight:700; color:${color};">(${e.outcome})</span>` : '';
+            
+            tlHtml += `
+            <div style="position:relative; margin-bottom:20px;">
+                <div style="position:absolute; left:-25px; top:0; width:10px; height:10px; background:${color}; border-radius:50%; border:2px solid white;"></div>
+                <div style="font-size:0.8rem; font-weight:700; color:#64748b;">${date}</div>
+                <div style="background:white; border:1px solid #f1f5f9; padding:8px; border-radius:6px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+                    <div style="font-weight:600; color:#334155;">${e.title} ${outcome}</div>
+                    <div style="font-size:0.85rem; color:#64748b;">${e.remark || ''}</div>
+                </div>
+            </div>
+            `;
+        });
+        tlHtml += '</div>';
+    }
+    
+    timeline.innerHTML = tlHtml;
+    modal.style.display = 'block';
+}
+
+// Wire up events for the new modals
+// Wire up events for the new modals
+document.addEventListener('DOMContentLoaded', () => {
+    // Total Patients Card Click
+    const totalCard = document.getElementById('totalPatientsCard');
+    if(totalCard) {
+        totalCard.onclick = () => window.openPatientList('all'); 
+    }
+    
+    // Active Card Click
+    const activeCard = document.getElementById('activeCard');
+    if(activeCard) {
+        activeCard.onclick = () => window.openPatientList('active');
+    }
+
+    // Outcomes Card Click
+    const outcomesCard = document.getElementById('outcomesCard');
+    if(outcomesCard) {
+        outcomesCard.onclick = () => window.openPatientList('completed');
+    }
+
+    // Close buttons
+    const closeList = document.getElementById('closePatientList');
+    if(closeList) closeList.onclick = () => document.getElementById('patientListModal').style.display = 'none';
+    
+    const closeDetail = document.getElementById('closePatientDetail');
+    if(closeDetail) closeDetail.onclick = () => document.getElementById('patientDetailModal').style.display = 'none';
+
+    // Inputs
+    const search = document.getElementById('patientSearch');
+    const filter = document.getElementById('patientFilter');
+    const monthFilter = document.getElementById('patientMonthFilter');
+    const sort = document.getElementById('patientSort');
+    
+    if(search) search.addEventListener('input', () => window.renderPatientList());
+    if(filter) filter.addEventListener('change', () => window.renderPatientList());
+    if(monthFilter) monthFilter.addEventListener('change', () => window.renderPatientList());
+    if(sort) sort.addEventListener('change', () => window.renderPatientList());
+    
+    // Close on outside click
+    window.addEventListener('click', (e) => {
+        const m1 = document.getElementById('patientListModal');
+        const m2 = document.getElementById('patientDetailModal');
+        if(e.target === m1) m1.style.display = 'none';
+        if(e.target === m2) m2.style.display = 'none';
+    });
+    
+    // Initial Dashboard Update
+    window.updateDashboardCounts();
+});

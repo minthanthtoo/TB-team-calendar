@@ -41,11 +41,11 @@
     
     <!-- Dashboard Summary -->
     <div class="dashboard-grid">
-      <div class="stat-card">
+      <div class="stat-card" id="totalPatientsCard" onclick="openPatientList()" style="cursor: pointer; transition: transform 0.1s;">
         <div class="stat-label">Total Patients</div>
         <div class="stat-value" id="totalCount">{{ patients|length }}</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" id="activeCard" onclick="openPatientList('active')" style="cursor: pointer; transition: transform 0.1s;">
         <div class="stat-label">Active Treatment</div>
         <div class="stat-value" id="activeCount">
           {% set active_count = 0 %}
@@ -55,9 +55,9 @@
           {{ active_count }}
         </div>
       </div>
-      <div class="stat-card" style="border-left-color: var(--success);">
+      <div class="stat-card" id="outcomesCard" onclick="openPatientList('completed')" style="border-left-color: var(--success); cursor: pointer; transition: transform 0.1s;">
         <div class="stat-label">Outcomes (Cured)</div>
-        <div class="stat-value">0</div>
+        <div class="stat-value" id="curedCount">0</div>
       </div>
     </div>
 
@@ -275,6 +275,55 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Patient List Modal -->
+  <div id="patientListModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 600px; height: 80vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h3 id="patientListTitle">All Patients</h3>
+        <span class="close-modal" id="closePatientList">&times;</span>
+      </div>
+      <div style="padding: 10px; border-bottom: 1px solid #e2e8f0; background: #f8fafc;">
+          <input type="text" id="patientSearch" placeholder="🔍 Search by name..." style="width: 100%; padding: 8px; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px;">
+          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <select id="patientFilter" style="flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                  <option value="all">All Status</option>
+                  <option value="active">Active Treatment</option>
+                  <option value="completed">Completed / Cured</option>
+                  <option value="outcome">Has Outcome</option>
+              </select>
+              <input type="month" id="patientMonthFilter" style="flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #e2e8f0;">
+          </div>
+          <div style="display: flex; gap: 8px;">
+              <select id="patientSort" style="flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                  <option value="name">Sort: Name (A-Z)</option>
+                  <option value="age">Sort: Age</option>
+                  <option value="newest">Sort: Newest</option>
+              </select>
+          </div>
+          <div id="patientListCount" style="padding: 4px 0 0 2px; font-size: 0.85rem; color: #64748b; font-weight: 500;"></div>
+      </div>
+      <div id="patientListContainer" style="flex: 1; overflow-y: auto; padding: 0;">
+         <!-- List injected by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Patient Detail Modal -->
+  <div id="patientDetailModal" class="modal-overlay" style="z-index: 1002;">
+      <div class="modal-content" style="max-width: 500px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header" style="background: var(--primary); color: white;">
+              <h3 id="pdName">Patient Details</h3>
+              <span class="close-modal" id="closePatientDetail" style="color: white;">&times;</span>
+          </div>
+          <div id="pdContent" style="padding: 15px;">
+              <div id="pdHeader" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px;"></div>
+              
+              <div class="section-title" style="font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0; margin-bottom: 10px; padding-bottom: 4px;">Treatment Timeline</div>
+              <div id="pdTimeline"></div>
+          </div>
+      </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.js"></script>
