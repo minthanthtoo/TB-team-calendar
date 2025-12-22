@@ -57,6 +57,7 @@ class TeamMember(db.Model):
     team_slug = db.Column(db.String(50), nullable=False) # e.g. "ygn-team"
     user_name = db.Column(db.String(100), nullable=False) # e.g. "Dr. Smith" or Device Name
     device_id = db.Column(db.String(100)) # Unique Device/Browser ID
+    status = db.Column(db.String(20), default='PENDING') # PENDING, APPROVED
     role = db.Column(db.String(20), default='MEMBER') # ADMIN, MEMBER
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
