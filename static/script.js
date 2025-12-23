@@ -1,5 +1,55 @@
 document.addEventListener('DOMContentLoaded', function() {
+  // Clear non-authorized memory immediately on start to prevent leaks/flicker
+  window.allPatientData = [];
+  
   if(window.hydrateLocalData) window.hydrateLocalData();
+
+  // -- Myanmar Calendar Caching & Helpers --
+  try {
+      window._mmcalCache = JSON.parse(localStorage.getItem('tb_mmcal_cache')) || {};
+  } catch(e) {
+      window._mmcalCache = {};
+  }
+
+  // Hydrate Toggle State
+  const toggleEl = document.getElementById('toggleMyanmarDetails');
+  if (toggleEl) {
+      const savedToggle = localStorage.getItem('tb_mm_details_enabled');
+      toggleEl.checked = savedToggle === 'true';
+      
+      toggleEl.addEventListener('change', (e) => {
+          localStorage.setItem('tb_mm_details_enabled', e.target.checked);
+          if (window.calendar) window.calendar.refetchEvents();
+      });
+  }
+
+  // Periodic save for the cache
+  setInterval(() => {
+      if (Object.keys(window._mmcalCache).length > 0) {
+          localStorage.setItem('tb_mmcal_cache', JSON.stringify(window._mmcalCache));
+      }
+  }, 10000); // Save every 10 seconds if updated
+
+  window.getMmDate = function(date) {
+      if (!date) return null;
+      const key = date.toISOString().split('T')[0];
+      if (window._mmcalCache[key]) return window._mmcalCache[key];
+      
+      try {
+          const y = date.getFullYear(), m = date.getMonth() + 1, d = date.getDate();
+          const jdn = ceDateTime.w2j(y, m, d) + MM_CAL_OFFSET;
+          const mDate = ceMmDateTime.j2m(jdn);
+          const holidays = ceMmDateTime.cal_holiday(jdn);
+          const mp = ceMmDateTime.cal_mp(mDate.md, mDate.mm, mDate.myt);
+          const mf = ceMmDateTime.cal_mf(mDate.md);
+          const isSabbath = ceMmDateTime.cal_sabbath(mDate.md, mDate.mm, mDate.myt);
+          
+          window._mmcalCache[key] = { jdn, mDate, holidays, mp, mf, isSabbath };
+          return window._mmcalCache[key];
+      } catch(e) {
+          return null;
+      }
+  };
 
   
   // -- Toast Notification System --
@@ -27,6 +77,29 @@ document.addEventListener('DOMContentLoaded', function() {
       setTimeout(() => toast.remove(), 300);
     }, 4000);
   }
+
+  window.showAccessDenied = function(teamName, responseMsg) {
+    const modal = document.getElementById('accessDeniedModal');
+    const msgEl = document.getElementById('accessDeniedMessage');
+    if(!modal) return;
+    
+    // SECURITY: Clear local data immediately so it's not visible behind the modal
+    window.allPatientData = [];
+    if(window.calendar) window.calendar.removeAllEvents();
+    
+    // Re-render empty registry
+    if(window.renderRegistry) window.renderRegistry([]);
+
+    if(msgEl) {
+        msgEl.innerHTML = `
+            You don't have permission to access <strong>${teamName || 'this team'}</strong>.<br>
+            <span style="font-size:0.8rem; margin-top:0.5rem; display:block; background:#fef2f2; padding:8px; border-radius:4px; border:1px solid #fecaca; color:#991b1b;">
+              Server Message: ${responseMsg || 'Membership check failed'}
+            </span>
+        `;
+    }
+    modal.style.display = 'flex';
+  };
 
   // -- Network Status --
   function updateNetworkStatus() {
@@ -291,12 +364,14 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch(url, {
             headers: { 'X-Device-ID': deviceId }
         })
-        .then(res => {
+        .then(async res => {
+            const data = await res.json();
             if(res.status === 403) {
-                showToast("Calendar access denied.", "error");
+                const teamName = localStorage.getItem('tb_team_name') || team;
+                if(window.showAccessDenied) window.showAccessDenied(teamName, data.message);
                 return [];
             }
-            return res.json();
+            return data;
         })
         .then(data => successCallback(data))
         .catch(err => {
@@ -324,11 +399,11 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     },
     dayCellDidMount: function(info) {
-        // Highlight Sabbath Days
-        const d = info.date;
-        const jdn = ceDateTime.w2j(d.getFullYear(), d.getMonth() + 1, d.getDate()) + MM_CAL_OFFSET;
-        const isSabbath = ceMmDateTime.cal_sabbath(ceMmDateTime.j2m(jdn).md, ceMmDateTime.j2m(jdn).mm, ceMmDateTime.j2m(jdn).myt);
-        if(isSabbath === 1) {
+        const showDetails = document.getElementById('toggleMyanmarDetails')?.checked;
+        if (!showDetails) return; 
+
+        const mmData = window.getMmDate(info.date);
+        if(mmData && mmData.isSabbath === 1) {
             info.el.classList.add('fc-day-sabbath');
         }
     },
@@ -339,62 +414,47 @@ document.addEventListener('DOMContentLoaded', function() {
           try {
             const holidays = [];
             const showDetails = document.getElementById('toggleMyanmarDetails')?.checked;
-            let start = new Date(fetchInfo.start);
+            let curr = new Date(fetchInfo.start);
             let end = new Date(fetchInfo.end);
-            let curr = new Date(start);
             
             while (curr < end) {
-              const y = curr.getFullYear(), m = curr.getMonth() + 1, d = curr.getDate();
-              const jdn = ceDateTime.w2j(y, m, d) + MM_CAL_OFFSET;
-              const mDate = ceMmDateTime.j2m(jdn); // {myt, my, mm, md}
-              
-              // 1. Public Holidays (Always show if possible, or bundle with toggle)
-              const hList = ceMmDateTime.cal_holiday(jdn);
-              if (hList && hList.length > 0) {
-                hList.forEach(hName => {
-                  holidays.push({
-                    title: `🇲🇲 ${hName}`,
-                    start: curr.toISOString().split('T')[0],
-                    allDay: true,
-                    className: 'holiday-event',
-                    color: '#fef9c3',
-                    textColor: '#854d0e'
-                  });
-                });
+              const mmData = window.getMmDate(curr);
+              if (mmData) {
+                  if (mmData.holidays && mmData.holidays.length > 0) {
+                    mmData.holidays.forEach(hName => {
+                      holidays.push({
+                        title: `🇲🇲 ${hName}`,
+                        start: curr.toISOString().split('T')[0],
+                        allDay: true,
+                        className: 'holiday-event',
+                        color: '#fef9c3',
+                        textColor: '#854d0e'
+                      });
+                    });
+                  }
+
+                  if (showDetails) {
+                    let lunarTitle = "";
+                    if (mmData.mp === 1) lunarTitle = "🌕 Full Moon";
+                    else if (mmData.mp === 3) lunarTitle = "🌑 New Moon";
+                    else {
+                        const phase = (mmData.mp === 0) ? "လဆန်း" : "လဆုတ်";
+                        lunarTitle = `${phase}\n${mmData.mf} ရက်`;
+                    }
+                    if (mmData.isSabbath === 1) lunarTitle += " (ဥပုသ်နေ့)";
+                    
+                    holidays.push({
+                      title: lunarTitle,
+                      start: curr.toISOString().split('T')[0],
+                      allDay: true,
+                      className: 'lunar-detail',
+                      display: 'list-item',
+                      textColor: '#64748b',
+                      backgroundColor: 'transparent',
+                      borderColor: 'transparent'
+                    });
+                  }
               }
-
-              // 2. Myanmar Lunar Details (If Toggled)
-              if (showDetails) {
-                const mp = ceMmDateTime.cal_mp(mDate.md, mDate.mm, mDate.myt); // 0=wax, 1=full, 2=wan, 3=new
-                const mf = ceMmDateTime.cal_mf(mDate.md);
-                const isSabbath = ceMmDateTime.cal_sabbath(mDate.md, mDate.mm, mDate.myt); // 1=sab, 2=eve
-
-                let lunarTitle = "";
-                let lunarClass = "lunar-detail";
-                let lunarColor = "transparent";
-
-                if (mp === 1) lunarTitle = "🌕 Full Moon";
-                else if (mp === 3) lunarTitle = "🌑 New Moon";
-                else {
-                    const phase = (mp === 0) ? "လဆန်း" : "လဆုတ်";
-                    // Add newline between phase and day number
-                    lunarTitle = `${phase}\n${mf} ရက်`;
-                }
-
-                if (isSabbath === 1) lunarTitle += " (ဥပုသ်နေ့)";
-                
-                holidays.push({
-                  title: lunarTitle,
-                  start: curr.toISOString().split('T')[0],
-                  allDay: true,
-                  className: lunarClass,
-                  display: 'list-item',
-                  textColor: '#64748b',
-                  backgroundColor: 'transparent',
-                  borderColor: 'transparent'
-                });
-              }
-
               curr.setDate(curr.getDate() + 1);
             }
             successCallback(holidays);
@@ -583,17 +643,36 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Global Sync State
-  window.lastSyncTime = null;
+  window.lastSyncTime = localStorage.getItem('tb_last_sync_time') || null;
 
-  // Helper to refresh data and then update detail view
-  window.refreshPatientDataAndUI = function(targetUid) {
+  window.setSyncState = function(state, text = null, title = null) {
+      const btn = document.getElementById('syncBtn');
+      const textEl = document.getElementById('syncText');
+      if(!btn || !textEl) return;
+
+      btn.classList.remove('sync-idle', 'sync-active', 'sync-success', 'sync-error');
+      btn.classList.add(`sync-${state}`);
+
+      if(text) textEl.innerText = text;
+      if(title) btn.title = title;
+  };
+
+  // Unified Sync Trigger
+  window.triggerSync = function(isForced = false, targetUid = null) {
       const team = localStorage.getItem('tb_team_slug') || '';
       const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
+      
+      // Prevent overlapping syncs unless forced
+      if(window.isSyncingInProgress && !isForced) return;
+      window.isSyncingInProgress = true;
+
+      setSyncState('active', 'Syncing...');
+
       let url = team ? `/api/get_all_data?team=${team}` : '/api/get_all_data';
       
       // Delta Sync: Only request 'since' if we have data and a previous sync time
       if(window.lastSyncTime && window.allPatientData && window.allPatientData.length > 0) {
-          url += `&since=${window.lastSyncTime}`;
+          url += (url.includes('?') ? '&' : '?') + `since=${window.lastSyncTime}`;
       }
       
       fetch(url, {
@@ -601,105 +680,126 @@ document.addEventListener('DOMContentLoaded', function() {
       })
       .then(res => {
           if(res.status === 403) {
-              showToast("Access Denied. Resetting to guest permissions.", "error");
-              localStorage.removeItem('tb_team_slug');
-              localStorage.removeItem('tb_team_name');
-              localStorage.removeItem('tb_team_invite_code');
-              updateMyTeamUI();
-              // Trigger reload to fetch public/user data
-              setTimeout(() =>  window.refreshPatientDataAndUI(), 500);
-              return { success: false };
+             throw new Error("403");
           }
+          if(!res.ok) throw new Error("Server error");
           return res.json();
       })
       .then(data => {
+          window.isSyncingInProgress = false;
           if(data.success) {
-              // Update Sync Time
-              if(data.timestamp) window.lastSyncTime = data.timestamp;
-
-              // Check Notifications (Persistent Badge & System Push)
-              const badge = document.getElementById('teamRequestBadge');
-              if(badge) {
-                  const pending = (data.stats && data.stats.pending_requests) || 0;
-                  const lastPending = window.lastPendingCount || 0;
-                  
-                  // Restore missing or incorrect Invite Code
-                  if(data.stats && data.stats.invite_code) {
-                      const existing = localStorage.getItem('tb_team_invite_code');
-                      if(existing !== data.stats.invite_code) {
-                          localStorage.setItem('tb_team_invite_code', data.stats.invite_code);
-                          updateMyTeamUI(); // Refresh UI once code arrives/updates
-                      }
-                  }
-                  
-                  // Visual Badge (Persistent)
-                  badge.style.display = pending > 0 ? 'block' : 'none';
-                  
-                  // System Notification (Push)
-                  if(pending > lastPending) {
-                      if(Notification.permission === "granted") {
-                          new Notification("New Team Request", {
-                              body: `${pending} user(s) waiting for approval.`,
-                              icon: '/static/icon.png' // Fallback if exists
-                          });
-                      } else if (Notification.permission !== "denied") {
-                          Notification.requestPermission().then(permission => {
-                              if (permission === "granted") {
-                                  new Notification("New Team Request", { body: "Check Team Management." });
-                              }
-                          });
-                      }
-                      showToast("🔔 New Join Request received!");
-                  }
-                  
-                  window.lastPendingCount = pending;
+              if(data.timestamp) {
+                  window.lastSyncTime = data.timestamp;
+                  localStorage.setItem('tb_last_sync_time', data.timestamp);
               }
+
+              // Process Notifications
+              if(window.processSyncNotifications) window.processSyncNotifications(data);
               
-              if(url.includes('&since=')) {
-                  console.log("Partial Sync Received:", data.data.length, "updates", data.deleted.length, "deletions");
+              const isDelta = url.includes('since=');
+
+              if(isDelta) {
+                  console.log(`[Cloud Sync] Received delta: ${data.data.length} updates, ${data.deleted.length} deletions`);
                   
                   // 1. Process Deletions
                   if(data.deleted && data.deleted.length > 0) {
                       const delSet = new Set(data.deleted);
                       window.allPatientData = window.allPatientData.filter(p => !delSet.has(p.uid));
-                      // Also handle Team deletions if necessary (but that's usually full reload)
                   }
                   
-                  // 2. Process Updates/Adds
+                  // 2. Process Updates/Adds with LWW (Last-Write-Wins)
                   if(data.data && data.data.length > 0) {
                       const updateMap = new Map(data.data.map(p => [p.uid, p]));
-                      // Update existing
-                      window.allPatientData = window.allPatientData.map(p => updateMap.has(p.uid) ? updateMap.get(p.uid) : p);
                       
-                      // Add new (those not in existing list)
-                      const existingUids = new Set(window.allPatientData.map(p => p.uid));
-                      data.data.forEach(p => {
-                          if(!existingUids.has(p.uid)) window.allPatientData.push(p);
+                      // Update existing only if remote is newer
+                      window.allPatientData = window.allPatientData.map(p => {
+                          if(updateMap.has(p.uid)) {
+                              const remote = updateMap.get(p.uid);
+                              const remoteTs = new Date(remote.updated_at || 0).getTime();
+                              const localTs = new Date(p.updated_at || 0).getTime();
+                              
+                              if(remoteTs >= localTs) {
+                                  updateMap.delete(p.uid); // Mark as processed
+                                  return remote;
+                              }
+                          }
+                          return p;
+                      });
+                      
+                      // Remaining items in updateMap are brand new
+                      updateMap.forEach(newP => {
+                          window.allPatientData.push(newP);
                       });
                   }
               } else {
-                  // Full Sync
+                  // Full Sync Replacement
                   window.allPatientData = data.data;
               }
 
+              // Post-Sync UI Updates
               if(targetUid) window.openPatientDetail(targetUid);
-              window.renderPatientList(); // Refresh list/badges too
-              
-              // Also sync Team List & Dashboard counts & Registry Sidebar during background sync
+              window.renderPatientList();
               window.loadTeams();
               if(window.updateDashboardCounts) window.updateDashboardCounts();
               if(window.updateRegistryStatus) window.updateRegistryStatus();
               if(window.calendar) window.calendar.refetchEvents();
-              
-              // Persist for offline access
               if(window.persistLocalData) window.persistLocalData();
+
+              setSyncState('success', 'Synced', `Last Synced: ${new Date().toLocaleTimeString()}`);
+              setTimeout(() => setSyncState('idle', 'Synced'), 3000);
+
+          } else {
+              setSyncState('error', 'Sync Failed', data.message || "Unknown error");
           }
       })
       .catch(err => {
-          console.error("Sync Error:", err);
-          showToast("Sync Interrupted", "error");
+          window.isSyncingInProgress = false;
+          if(err.message === "403") {
+              showToast("Access Denied. Resetting permissions.", "error");
+              localStorage.removeItem('tb_team_slug');
+              localStorage.removeItem('tb_team_name');
+              localStorage.removeItem('tb_team_invite_code');
+              // (Wait for refreshPatientDataAndUI to trigger refresh)
+              setTimeout(() =>  window.triggerSync(true), 500);
+          } else {
+              console.error("Sync Error:", err);
+              setSyncState('error', 'Sync Interrupted');
+          }
       });
-  }
+  };
+
+  // Legacy compatibility / Helper
+  window.refreshPatientDataAndUI = function(targetUid) {
+      window.triggerSync(true, targetUid);
+  };
+
+  window.processSyncNotifications = function(data) {
+      const badge = document.getElementById('teamRequestBadge');
+      if(badge) {
+          const pending = (data.stats && data.stats.pending_requests) || 0;
+          const lastPending = window.lastPendingCount || 0;
+          
+          if(data.stats && data.stats.invite_code) {
+              const existing = localStorage.getItem('tb_team_invite_code');
+              if(existing !== data.stats.invite_code) {
+                  localStorage.setItem('tb_team_invite_code', data.stats.invite_code);
+                  if(window.updateMyTeamUI) window.updateMyTeamUI(); 
+              }
+          }
+          
+          badge.style.display = pending > 0 ? 'block' : 'none';
+          
+          if(pending > lastPending) {
+              if(Notification.permission === "granted") {
+                  new Notification("New Team Request", { body: `${pending} user(s) waiting for approval.` });
+              } else if (Notification.permission !== "denied") {
+                  Notification.requestPermission();
+              }
+              showToast("🔔 New Join Request received!");
+          }
+          window.lastPendingCount = pending;
+      }
+  };
 
   // -- Modal Close Logic --
   const modal = document.getElementById('eventModal');
@@ -1330,13 +1430,15 @@ window.updateDashboardCounts = function() {
     fetch(`/api/get_all_data?team=${teamSlug}`, {
         headers: { 'X-Device-ID': deviceId }
     })
-    .then(res => {
+    .then(async res => {
+        const data = await res.json();
         if(res.status === 403) {
-            // Silently ignore or handle 403 for dashboard background updates
+            const teamName = localStorage.getItem('tb_team_name') || teamSlug;
+            if(window.showAccessDenied) window.showAccessDenied(teamName, data.message);
             return { success: false, access_denied: true };
         }
         if(!res.ok) throw new Error("Dashboard sync failed");
-        return res.json();
+        return data;
     })
     .then(data => {
         if (data.access_denied) return; // Stop if forbidden
@@ -1383,7 +1485,7 @@ window.updateDashboardCounts = function() {
 // -- Patient List & Detail View Logic --
 // -- Patient Data Persistence --
 window.allPatientData = [];
-window.lastSyncTime = localStorage.getItem('tb_last_sync_time');
+// (Moved to Global Sync section)
 
 window.persistLocalData = function() {
     try {
@@ -1391,7 +1493,7 @@ window.persistLocalData = function() {
         localStorage.setItem('tb_all_patient_data', JSON.stringify(window.allPatientData));
         localStorage.setItem('tb_all_patient_data_team', team);
         if(window.lastSyncTime) {
-            localStorage.setItem('tb_last_sync_time', window.lastSyncTime);
+            // (Handled in triggerSync)
         }
     } catch (e) {
         console.warn("Failed to persist data to localStorage:", e);
@@ -1404,19 +1506,25 @@ window.hydrateLocalData = function() {
         const cachedTeam = localStorage.getItem('tb_all_patient_data_team');
         const cached = localStorage.getItem('tb_all_patient_data');
         
+        // Strict consistency check: Only hydrate if cache matches CURRENT selected team
         if(cached && currentTeam === cachedTeam) {
             window.allPatientData = JSON.parse(cached);
             console.log(`[PWA] Hydrated ${window.allPatientData.length} patients from cache.`);
             
-            // Immediate UI update from cache
-            if(window.renderPatientList) window.renderPatientList();
-            if(window.updateDashboardCounts) window.updateDashboardCounts();
-            if(window.updateRegistryStatus) window.updateRegistryStatus();
+            // Do NOT render immediately if we have a team slug; let the server fetch confirm permissions first
+            // UNLESS we are in DEFAULT/Guest mode where no perms check is needed
+            if(currentTeam === 'DEFAULT') {
+                if(window.renderPatientList) window.renderPatientList();
+                if(window.updateDashboardCounts) window.updateDashboardCounts();
+                if(window.updateRegistryStatus) window.updateRegistryStatus();
+            }
+            
             if(window.calendar && typeof window.calendar.refetchEvents === 'function') {
                 window.calendar.refetchEvents();
             }
         } else {
             console.log("[PWA] No valid cache for current team.");
+            window.allPatientData = []; // Ensure fresh state if mismatch
         }
     } catch (e) {
         console.error("Hydration failed:", e);
@@ -1432,43 +1540,18 @@ window.openPatientList = function(initialFilter = 'all') {
     const filterSelect = document.getElementById('patientFilter');
     if(filterSelect) filterSelect.value = initialFilter;
     
-    document.getElementById('patientListContainer').innerHTML = '<div style="padding:20px; text-align:center;"><span class="spinner"></span> Loading...</div>';
-    
-    const team = localStorage.getItem('tb_team_slug') || '';
-    const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
-    const url = team ? `/api/get_all_data?team=${team}` : '/api/get_all_data';
-
-    fetch(url, {
-        headers: { 'X-Device-ID': deviceId }
-    })
-    .then(res => {
-        if(res.status === 403) {
-            showToast("Access Denied. Resetting team view.", "error");
-            localStorage.removeItem('tb_team_slug');
-            localStorage.removeItem('tb_team_name');
-            localStorage.removeItem('tb_team_invite_code');
-            updateMyTeamUI();
-            // Try again with guest view
-            setTimeout(() => window.openPatientList(initialFilter), 500);
-            return { success: false, handled: true };
-        }
-        if(!res.ok) throw new Error("Failed to load patient list");
-        return res.json();
-    })
-    .then(data => {
-        if (data.handled) return;
-        if(data.success) {
-            window.allPatientData = data.data; // Store globally for filtering
-            renderPatientList();
-        } else {
-            showToast("Error: " + (data.message || "Failed to load"), "error");
-            document.getElementById('patientListContainer').innerHTML = `<div style="color:red; padding:20px;">Error: ${data.message}</div>`;
-        }
-    })
-    .catch(err => {
-        showToast("Network Error: " + err.message, "error");
-        document.getElementById('patientListContainer').innerHTML = `<div style="color:red; padding:20px;">Network Error</div>`;
-    });
+    // -- HYBRID RENDERING --
+    // If we have cached data, show it immediately
+    if (window.allPatientData && window.allPatientData.length > 0) {
+        console.log("[Patient List] Rendering from cache first...");
+        window.renderPatientList();
+        // Silent background sync
+        if (window.triggerSync) window.triggerSync(true);
+    } else {
+        // No cache: show spinner and wait for full sync
+        document.getElementById('patientListContainer').innerHTML = '<div style="padding:20px; text-align:center;"><span class="spinner"></span> Loading...</div>';
+        if (window.triggerSync) window.triggerSync(true);
+    }
 }
 
 window.renderPatientList = function() {
@@ -1716,21 +1799,30 @@ document.addEventListener('DOMContentLoaded', () => {
     window.updateDashboardCounts();
 });
 window.updateRegistryStatus = async function(viewStart, viewEnd) {
-    // Auto-detect current view if not provided (e.g. background sync)
+    // SECURITY: Hide all registry items immediately
+    document.querySelectorAll('.patient-item').forEach(li => {
+        li.style.display = 'none';
+    });
+
+    // Auto-detect current view if not provided
     if(!viewStart && !viewEnd) {
         if (window.calendar && window.calendar.view) {
             const view = window.calendar.view;
             viewStart = view.activeStart;
             viewEnd = view.activeEnd;
         } else {
-           // Fallback if calendar not ready: use current month/year
            const now = new Date();
            viewStart = new Date(now.getFullYear(), now.getMonth(), 1);
            viewEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
         }
     }
     
-    console.log(`[Registry Update] Filtering for: ${viewStart?.toLocaleDateString()} to ${viewEnd?.toLocaleDateString()}`);
+    // -- OPTIMIZATION: Use local data if available to avoid redundant calls --
+    if (window.allPatientData && window.allPatientData.length > 0) {
+        console.log("[Registry Update] Using local cached data.");
+        processRegistryRefresh(window.allPatientData, viewStart, viewEnd);
+        return;
+    }
 
     try {
         const team = localStorage.getItem('tb_team_slug') || '';
@@ -1742,129 +1834,112 @@ window.updateRegistryStatus = async function(viewStart, viewEnd) {
         });
         
         if (response.status === 403) {
-            console.warn("Registry update blocked: 403 Forbidden");
+            const data = await response.json();
+            const teamName = localStorage.getItem('tb_team_name') || team;
+            if(window.showAccessDenied) window.showAccessDenied(teamName, data.message);
             return;
         }
         
         const rData = await response.json();
-        const patients = rData.data || [];
-        window.currentTeamUids = new Set(patients.map(p => p.uid));
-        
-        // Hide all sidebar items first
-        document.querySelectorAll('.patient-item').forEach(li => {
-            li.style.display = 'none';
-        });
-        
-        patients.forEach(p => {
-            // View-based filtering: Only show patients with events in the current view
-            if(viewStart && viewEnd) {
-                const hasEventInView = (p.events || []).some(e => {
-                    const eDate = new Date(e.start);
-                    return eDate >= viewStart && eDate <= viewEnd;
-                });
-                if(!hasEventInView) return; // Skip if no events in view
-            }
+        if (rData.success) {
+            processRegistryRefresh(rData.data, viewStart, viewEnd);
+        }
+    } catch (e) {
+        console.error("Failed to update registry status:", e);
+    }
+};
 
-            const itemEl = document.querySelector(`.patient-item[data-uid="${p.uid}"]`);
-            if(itemEl) {
-                itemEl.style.display = 'block';
-                
-                // Add hover & click listeners for yearly dot highlighting if not already added
-                if(!itemEl.dataset.hlInit) {
-                    const highlight = (active) => {
-                        const dots = document.querySelectorAll('.month-event-dot');
-                        const grid = document.getElementById('year-summary-grid');
-                        if(active) {
-                            dots.forEach(d => {
-                                if(d.dataset.patientUid === p.uid) {
-                                    d.classList.add('dot-highlight');
-                                    d.classList.remove('dot-dim');
-                                    
-                                    // Smart Tooltip Positioning
-                                    // Get dot position relative to offset parent
-                                    const rect = d.offsetLeft;
-                                    const parentWidth = d.offsetParent ? d.offsetParent.offsetWidth : 100;
-                                    
-                                    // Reset classes
-                                    d.classList.remove('tooltip-left', 'tooltip-right');
-                                    
-                                    if (rect < 40) {
-                                        d.classList.add('tooltip-left');
-                                    } else if (rect > parentWidth - 40) {
-                                        d.classList.add('tooltip-right');
-                                    }
-                                } else {
-                                    d.classList.add('dot-dim');
-                                    d.classList.remove('dot-highlight', 'tooltip-left', 'tooltip-right');
-                                }
-                            });
-                            grid?.classList.add('grid-dimming');
-                        } else {
-                            dots.forEach(d => d.classList.remove('dot-highlight', 'dot-dim'));
-                            grid?.classList.remove('grid-dimming');
-                        }
-                    };
+function processRegistryRefresh(patients, viewStart, viewEnd) {
+    window.currentTeamUids = new Set(patients.map(p => p.uid));
+    
+    patients.forEach(p => {
+        // View-based filtering
+        let visibleInView = true;
+        if(viewStart && viewEnd) {
+            visibleInView = (p.events || []).some(e => {
+                const eDate = new Date(e.start);
+                return eDate >= viewStart && eDate <= viewEnd;
+            });
+        }
 
-                    itemEl.addEventListener('mouseenter', () => !itemEl.classList.contains('item-selected') && highlight(true));
-                    itemEl.addEventListener('mouseleave', () => !itemEl.classList.contains('item-selected') && highlight(false));
-                    
-                    itemEl.addEventListener('click', (e) => {
-                        // Toggle selected state for touch/persistent highlight
-                        const isSelected = itemEl.classList.toggle('item-selected');
-                        
-                        // Clear others
-                        document.querySelectorAll('.patient-item').forEach(other => {
-                            if(other !== itemEl) other.classList.remove('item-selected');
+        const itemEl = document.querySelector(`.patient-item[data-uid="${p.uid}"]`);
+        if(itemEl) {
+            itemEl.style.display = visibleInView ? 'flex' : 'none';
+            
+            // Re-bind Highlights for Yearly Grid
+            if(!itemEl.dataset.hlInit) {
+                const highlight = (active) => {
+                    const dots = document.querySelectorAll('.month-event-dot');
+                    const grid = document.getElementById('year-summary-grid');
+                    if(active) {
+                        dots.forEach(d => {
+                            if(d.dataset.patientUid === p.uid) {
+                                d.classList.add('dot-highlight');
+                                d.classList.remove('dot-dim');
+                            } else {
+                                d.classList.add('dot-dim');
+                                d.classList.remove('dot-highlight');
+                            }
                         });
-                        
-                        highlight(isSelected);
+                        grid?.classList.add('grid-dimming');
+                    } else {
+                        dots.forEach(d => d.classList.remove('dot-highlight', 'dot-dim'));
+                        grid?.classList.remove('grid-dimming');
+                    }
+                };
+
+                itemEl.addEventListener('mouseenter', () => !itemEl.classList.contains('item-selected') && highlight(true));
+                itemEl.addEventListener('mouseleave', () => !itemEl.classList.contains('item-selected') && highlight(false));
+                itemEl.addEventListener('click', () => {
+                    const isSelected = itemEl.classList.toggle('item-selected');
+                    document.querySelectorAll('.patient-item').forEach(other => {
+                        if(other !== itemEl) other.classList.remove('item-selected');
                     });
-                    
-                    itemEl.dataset.hlInit = 'true';
-                }
+                    highlight(isSelected);
+                });
+                itemEl.dataset.hlInit = 'true';
             }
 
+            // Update Status & Progress
             const statusEl = document.getElementById(`status-${p.uid}`);
             const progressEl = document.getElementById(`progress-${p.uid}`);
             const progressText = document.getElementById(`progress-text-${p.uid}`);
             
-            if(!statusEl) return;
-
-            // 1. Calculate Status
-            const events = p.events || [];
-            // Sort events by date
-            const sorted = [...events].sort((a,b) => new Date(a.start) - new Date(b.start));
-            const last = sorted.length > 0 ? sorted[sorted.length - 1] : null;
-            
-            let status = 'Active';
-            let badgeClass = 'badge-active';
-            
-            if(last && (last.outcome === 'Cured' || last.outcome === 'Completed')) {
-                status = 'Completed';
-                badgeClass = 'badge-completed';
-            }
-            
-            statusEl.innerHTML = `<span class="badge ${badgeClass}">${status}</span>`;
-            
-            // 2. Calculate Progress
-            if(sorted.length > 0) {
-                const start = new Date(sorted[0].start);
-                const now = new Date();
-                const totalDays = 180; // Default treatment span
-                const elapsed = Math.max(0, (now - start) / (1000 * 60 * 60 * 24));
-                const percent = Math.min(100, Math.round((elapsed / totalDays) * 100));
+            if(statusEl) {
+                const sorted = [...(p.events || [])].sort((a,b) => new Date(a.start) - new Date(b.start));
+                const last = sorted.length > 0 ? sorted[sorted.length - 1] : null;
                 
-                if(progressEl) progressEl.style.width = `${percent}%`;
-                if(progressText) progressText.innerText = `${percent}% Treated (${Math.round(elapsed)}d / ${totalDays}d)`;
-            } else {
-                if(progressEl) progressEl.style.width = '0%';
-                if(progressText) progressText.innerText = 'No events recorded';
+                let status = 'Active';
+                let badgeClass = 'badge-active';
+                if(last && (last.outcome === 'Cured' || last.outcome === 'Completed')) {
+                    status = 'Completed';
+                    badgeClass = 'badge-completed';
+                }
+                statusEl.innerHTML = `<span class="badge ${badgeClass}">${status}</span>`;
+
+                if(sorted.length > 0) {
+                    const start = new Date(sorted[0].start);
+                    const now = new Date();
+                    const totalDays = 180;
+                    const elapsed = Math.max(0, (now - start) / (1000 * 60 * 60 * 24));
+                    const percent = Math.min(100, Math.round((elapsed / totalDays) * 100));
+                    
+                    if(progressEl) progressEl.style.width = `${percent}%`;
+                    if(progressText) progressText.innerText = `${percent}% Treated (${Math.round(elapsed)}d / ${totalDays}d)`;
+                } else {
+                    if(progressEl) progressEl.style.width = '0%';
+                    if(progressText) progressText.innerText = 'No events recorded';
+                }
             }
-        });
-    } catch (e) {
-        console.error("Failed to update registry status:", e);
-    }
+        }
+    });
 }
+
+// Background Sync Timer (60s)
+if (window.syncInterval) clearInterval(window.syncInterval);
+window.syncInterval = setInterval(() => {
+    if (window.triggerSync) window.triggerSync(false);
+}, 60000);
 
 // -- Helper for Timeline Interactions --
 window.editTimelineEvent = function(uid, eventId) {
@@ -2134,20 +2209,45 @@ function loadTeams() {
     })
     .then(data => {
         if(!data.success || !listMy) return;
+
+        // Show quota summary at top of My Teams
+        const q = data.quota || { created: 0, max_created: 5, joined: 0, max_joined: 10 };
+        const quotaHtml = `
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:12px; display:flex; justify-content:space-around; font-size:0.75rem; color:#475569;">
+                <div><span style="font-weight:700; color:#0f172a;">Created:</span> ${q.created} / ${q.max_created}</div>
+                <div><span style="font-weight:700; color:#0f172a;">Joined:</span> ${q.joined} / ${q.max_joined}</div>
+            </div>
+        `;
+
         if(data.teams.length === 0) {
-            listMy.innerHTML = '<div style="color:#94a3b8; font-size:0.85rem; text-align:center; padding:10px; background:#f1f5f9; border-radius:6px;">You haven\'t joined any teams yet.</div>';
+            listMy.innerHTML = quotaHtml + '<div style="color:#94a3b8; font-size:0.85rem; text-align:center; padding:10px; background:#f1f5f9; border-radius:6px;">You haven\'t joined any teams yet.</div>';
         } else {
-            let html = '';
+            let html = quotaHtml;
             data.teams.forEach(t => {
                 const isActive = t.slug === currentSlug;
                 let btn = '';
+                const mStatus = t.membership_status;
+
                 if (isActive) {
                     btn = `<span style="font-size:0.75rem; font-weight:700; color:#166534; background:#dcfce7; padding:2px 8px; border-radius:12px;">ACTIVE</span>`;
                 } else {
-                    if(t.status === 'APPROVED' || t.status === undefined) { 
+                    if (mStatus === 'APPROVED') { 
                         btn = `<button onclick="switchTeam('${t.slug}', '${t.name}', '${t.invite_code || ''}')" style="background:#0f172a; color:white; border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:0.75rem;">Switch</button>`;
+                    } else if (mStatus === 'PENDING') {
+                        btn = `
+                            <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+                                <span style="color:#c2410c; background:#fff7ed; padding:2px 8px; border-radius:12px; font-size:0.7rem; border:1px solid #fdba74;">Pending</span>
+                                <button onclick="triggerLeaveFlow('${t.slug}', 'Cancel Request?')" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.65rem; text-decoration:underline; padding:0;">Cancel</button>
+                            </div>`;
+                    } else if (mStatus === 'REJECTED') {
+                        btn = `
+                            <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+                                <span style="color:#991b1b; background:#fef2f2; padding:2px 8px; border-radius:12px; font-size:0.7rem; border:1px solid #fecaca;">Rejected</span>
+                                <button onclick="triggerLeaveFlow('${t.slug}', 'Clear and re-join?')" style="background:#0f172a; color:white; border:none; border-radius:4px; padding:2px 8px; cursor:pointer; font-size:0.65rem;">Re-Join</button>
+                            </div>`;
                     } else {
-                        btn = `<span style="color:#c2410c; background:#fff7ed; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid #fdba74;">Pending</span>`;
+                        // Not joined at all (e.g. if we chose to list all in My Teams or in Directory)
+                        btn = `<button onclick="joinTeam('${t.slug}')" style="background:white; border:1px solid #0f172a; color:#0f172a; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:0.75rem;">Join</button>`;
                     }
                 }
                 const privacyBadge = t.is_public 
@@ -2162,7 +2262,7 @@ function loadTeams() {
                                 ${privacyBadge}
                             </div>
                             <div style="font-size:0.75rem; color:#64748b; margin-top:2px; display:flex; align-items:center; gap:8px;">
-                                <span>👥 ${t.member_count} members</span>
+                                <span>👥 ${t.member_count} / 500 members</span>
                                 ${t.invite_code ? `
                                     <span style="color:#0369a1; background:#f0f9ff; padding:1px 6px; border-radius:4px; font-family:monospace; font-weight:700; border:1px dashed #0ea5e9; cursor:pointer;" onclick="event.stopPropagation(); navigator.clipboard.writeText('${t.invite_code}'); showToast('Code Copied!');" title="Click to copy">
                                       ${t.invite_code}
@@ -2200,9 +2300,16 @@ function loadTeams() {
             let html = '';
             data.teams.forEach(t => {
                 const privacyBadge = '<span style="font-size:0.65rem; background:#e0f2fe; color:#0284c7; padding:2px 6px; border-radius:10px; border:1px solid #bae6fd;">PUBLIC</span>';
+                const mStatus = t.membership_status;
                 let btn = '';
-                if (t.joined) {
+                const countBadge = `<span style="font-size:0.7rem; color:#94a3b8; margin-left:8px;">${t.member_count}/500</span>`;
+
+                if (mStatus === 'APPROVED') {
                     btn = `<button disabled style="background:#f1f5f9; border:1px solid #e2e8f0; color:#94a3b8; border-radius:4px; padding:4px 10px; cursor:default; font-size:0.75rem;">Joined</button>`;
+                } else if (mStatus === 'PENDING') {
+                    btn = `<button onclick="triggerLeaveFlow('${t.slug}', 'Cancel Request?')" style="background:#fff7ed; border:1px solid #fdba74; color:#c2410c; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:0.75rem;">Pending</button>`;
+                } else if (mStatus === 'REJECTED') {
+                    btn = `<button onclick="triggerLeaveFlow('${t.slug}', 'Re-Join?')" style="background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:0.75rem;">Rejected</button>`;
                 } else {
                     btn = `<button onclick="joinTeam('${t.slug}')" style="background:white; border:1px solid #0f172a; color:#0f172a; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:0.75rem;">Join</button>`;
                 }
@@ -2214,7 +2321,7 @@ function loadTeams() {
                             <div style="font-weight:600; color:#334155;">${t.name}</div>
                             ${privacyBadge}
                           </div>
-                          <div style="font-size:0.75rem; color:#64748b;">👥 ${t.member_count} members</div>
+                          <div style="font-size:0.75rem; color:#64748b;">👥 ${t.member_count} / 500 members</div>
                       </div>
                       <div>${btn}</div>
                   </div>
@@ -2386,6 +2493,16 @@ window.loadPendingMembers = function(slug) {
         return res.json();
     })
     .then(data => {
+        // Update Admin Modal Title with count
+        const total = data.members ? data.members.length : 0;
+        const limitTxt = `<span style="font-size:0.8rem; font-weight:400; color:#64748b; margin-left:8px;">(${total}/500 members)</span>`;
+        const titleEl = document.querySelector('#adminModal h3');
+        if(titleEl) {
+            // Keep the original title but append/update count
+            const baseTitle = "Team Administration"; 
+            titleEl.innerHTML = baseTitle + limitTxt;
+        }
+
         if(data.success && data.members.length > 0) {
             const myDeviceId = localStorage.getItem('tb_device_name');
 
@@ -2495,8 +2612,9 @@ function switchTeam(slug, name, inviteCode) {
     if(window.persistLocalData) window.persistLocalData();
 }
 
-window.triggerLeaveFlow = function(slug) {
-    if(confirm("Are you sure you want to leave this team?")) {
+window.triggerLeaveFlow = function(slug, customMsg) {
+    const msg = customMsg || "Are you sure you want to leave this team?";
+    if(confirm(msg)) {
          const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
          fetch('/api/teams/leave', {
              method: 'POST',
@@ -2504,14 +2622,14 @@ window.triggerLeaveFlow = function(slug) {
              body: JSON.stringify({ slug: slug })
          })
          .then(res => {
-             if(!res.ok) throw new Error("Leave request failed");
+             if(!res.ok) throw new Error("Request failed");
              return res.json();
          })
          .then(data => {
              if(data.success) {
-                 showToast("Left team successfully.");
+                 showToast("Action complete.");
                  
-                 // Only clear active workspace if it's the team we just left
+                 // Only clear active workspace if it's the team we just left/cancelled
                  const currentSlug = localStorage.getItem('tb_team_slug');
                  if(currentSlug === slug) {
                      localStorage.removeItem('tb_team_slug');
@@ -2521,9 +2639,8 @@ window.triggerLeaveFlow = function(slug) {
                  }
                  
                  loadTeams();
-                 // window.location.reload(); // Removed reload for smoother UI
              } else {
-                 showToast(data.message || "Failed to leave", "error");
+                 showToast(data.message || "Failed to complete action", "error");
              }
          })
          .catch(err => {

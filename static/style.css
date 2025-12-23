@@ -21,10 +21,12 @@
     0 2px 4px -1px rgba(0, 0, 0, 0.03);
 
   --font-main: "Inter", system-ui, -apple-system, sans-serif;
+  --font-size-base: clamp(14px, 1vw + 10px, 16px);
 }
 
 body {
   font-family: var(--font-main);
+  font-size: var(--font-size-base);
   margin: 0;
   padding: 0;
   background-color: var(--bg-body);
@@ -55,6 +57,78 @@ header h1 {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+/* Sabbath Day Styling */
+.fc-day-sabbath {
+    background-color: rgba(14, 165, 233, 0.03) !important;
+    position: relative;
+}
+
+.fc-day-sabbath::after {
+    content: '🌙';
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    font-size: 0.7rem;
+    opacity: 0.5;
+}
+
+.fc-day-today.fc-day-sabbath {
+    background-color: rgba(14, 165, 233, 0.08) !important;
+}
+
+/* Sync Button Styles */
+.sync-btn {
+  border: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.sync-idle {
+  background: #f1f5f9;
+  color: var(--text-main);
+  border: 1px solid #e2e8f0;
+}
+
+.sync-idle:hover {
+  background: #e2e8f0;
+}
+
+.sync-active {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+.sync-active .sync-icon {
+  animation: sync-spin 1s linear infinite;
+  display: inline-block;
+}
+
+.sync-error {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.sync-success {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+}
+
+@keyframes sync-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .container {
@@ -240,14 +314,66 @@ h3 {
   border-color: #cbd5e1;
 }
 
-.btn-danger {
-  background-color: transparent;
-  color: var(--danger);
-  border: 1px solid transparent;
-}
 .btn-danger:hover:not(:disabled) {
   background-color: #fef2f2;
   border-color: #fee2e2;
+}
+
+/* iOS Style Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #cbd5e1;
+  transition: .4s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+input:checked + .slider {
+  background-color: var(--primary);
+}
+
+input:focus + .slider {
+  box-shadow: 0 0 1px var(--primary);
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+}
+
+.slider.round {
+  border-radius: 24px;
+}
+
+.slider.round:before {
+  border-radius: 50%;
 }
 
 /* Toggle Button */

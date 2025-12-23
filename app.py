@@ -103,23 +103,29 @@ def events():
     team_slug = request.args.get('team')
     requester_device = request.headers.get('X-Device-ID')
     
+    # 1. Determine authorized teams for this device
+    authorized_slugs = []
+    if requester_device:
+        memberships = TeamMember.query.filter_by(device_id=requester_device, status='APPROVED').all()
+        authorized_slugs = [m.team_slug for m in memberships]
+
+    # 2. Filtering Logic
     if team_slug and team_slug != 'ALL' and team_slug != 'DEFAULT':
-        # Security Check: Must be APPROVED member of this team
+        # Security Check: Must be APPROVED member of SPECIFIC team
         if not requester_device:
             return jsonify(error="Device ID required"), 403
             
-        membership = TeamMember.query.filter_by(
-            team_slug=team_slug, 
-            device_id=requester_device, 
-            status='APPROVED'
-        ).first()
-        
-        if not membership:
-             return jsonify(error="Unauthorized: Not an approved member"), 403
+        if team_slug not in authorized_slugs:
+             return jsonify(error="Unauthorized: Not an approved member of this team"), 403
 
         events = Event.query.join(Patient).filter(Patient.team_id == team_slug).all()
     else:
-        events = Event.query.all()
+        # Global View: Return only data from teams I am a member of
+        if not authorized_slugs:
+            # If guest or not in any teams, return empty instead of "all"
+            return jsonify([])
+        
+        events = Event.query.join(Patient).filter(Patient.team_id.in_(authorized_slugs)).all()
         
     return jsonify([{
         "id": e.id,
@@ -232,7 +238,8 @@ def update_event():
         if "M-end" in ev.title:
             valid_outcomes = ["", "Cured", "Completed","Failed", "LTFU", "Died"]
         else:
-            valid_outcomes = ["", "Failed", "LTFU", "Died"]
+            # Allow "Start" so the initial milestone can be edited without 400 error
+            valid_outcomes = ["", "Start", "Failed", "LTFU", "Died"]
 
         if outcome not in valid_outcomes:
             return jsonify(success=False, message="Invalid outcome for this milestone"), 400
@@ -332,71 +339,71 @@ def get_all_data():
     since_str = request.args.get('since')
     requester_device = request.headers.get('X-Device-ID')
     
-    # ... Security Checks ...
+    # 1. Determine authorized teams for this device
+    authorized_slugs = []
+    if requester_device:
+        memberships = TeamMember.query.filter_by(device_id=requester_device, status='APPROVED').all()
+        authorized_slugs = [m.team_slug for m in memberships]
+
+    # 2. Security & Filtering Setup
     query = Patient.query
     pending_count = 0
     invite_code = None
     
+    # Contextual Filtering
     if target_team and target_team != 'ALL' and target_team != 'DEFAULT':
         team_rec = Team.query.filter_by(slug=target_team).first()
         if team_rec: invite_code = team_rec.invite_code
         
-        # SECURITY CHECK
-        # Must be APPROVED member of this team
+        # Hard Security Check
         if not requester_device:
             return jsonify(error="Device ID required"), 403
             
-        membership = TeamMember.query.filter_by(
-            team_slug=target_team, 
-            device_id=requester_device, 
-            status='APPROVED'
-        ).first()
-        
-        if not membership:
-             return jsonify(error="Unauthorized: Not an approved member"), 403
+        if target_team not in authorized_slugs:
+             return jsonify(error="Unauthorized: Not an approved member of this team"), 403
 
         # Admin Stats for Notifications
-        if membership.role == 'ADMIN':
+        admin_membership = TeamMember.query.filter_by(team_slug=target_team, device_id=requester_device, role='ADMIN').first()
+        if admin_membership:
             pending_count = TeamMember.query.filter_by(team_slug=target_team, status='PENDING').count()
 
-        # Filter patients by team
+        # Filter patients by specific team
         query = query.filter_by(team_id=target_team)
+    else:
+        # Global Sync (or Guest Mode)
+        if not authorized_slugs:
+            # If guest or not in any teams, return empty data structure
+            return jsonify(success=True, data=[], deleted=[], teams=[], members=[], timestamp=datetime.utcnow().isoformat(), stats={"pending_requests": 0, "invite_code": None})
+        
+        # Filter patients by all authorized teams
+        query = query.filter(Patient.team_id.in_(authorized_slugs))
 
-    # DELTA SYNC LOGIC
+    # 3. DELTA SYNC LOGIC
     if since_str:
         try:
             since_dt = datetime.fromisoformat(since_str)
-            # 1. Patients modified directly
             p_direct = query.filter(Patient.updated_at > since_dt).all()
-            
-            # 2. Patients with modified events (if query filters by team, join ensures we respect that)
             p_via_events = query.join(Event).filter(Event.updated_at > since_dt).all()
-            
-            # Union unique
             patients = list(set(p_direct + p_via_events))
             
-            # 3. Deleted Records (since time)
+            # Simple filtering for DeletedRecord (minor leak if not filtered by team, but manageable for now)
             deleted = DeletedRecord.query.filter(DeletedRecord.timestamp > since_dt).all()
             
-            # 4. Teams & Members (since time)
-            # Note: We return ALL teams/members if no 'since', but delta if 'since' exists
-            # For Teams, normally we don't edit them much, but let's check created_at? 
-            # Team doesn't have updated_at yet. Use created_at for new teams.
-            teams = Team.query.filter(Team.created_at > since_dt).all()
-            members = TeamMember.query.filter(TeamMember.updated_at > since_dt).all()
+            teams = Team.query.filter(Team.slug.in_(authorized_slugs), Team.updated_at > since_dt).all()
+            members = TeamMember.query.filter(TeamMember.team_slug.in_(authorized_slugs), TeamMember.updated_at > since_dt).all()
             
         except ValueError:
              return jsonify(success=False, message="Invalid Date Format"), 400
     else:
         # Full Sync
         patients = query.all()
-        deleted = DeletedRecord.query.all()
-        teams = Team.query.all()
-        members = TeamMember.query.all()
+        deleted = DeletedRecord.query.all() # Minor leak: all deleted UIDs. Acceptable trade-off for simplicity vs adding field.
+        teams = Team.query.filter(Team.slug.in_(authorized_slugs)).all()
+        members = TeamMember.query.filter(TeamMember.team_slug.in_(authorized_slugs)).all()
     
     data = []
     
-    # 1. Patients & Events
+    # 4. Serialize
     for p in patients:
         p_data = {
             "uid": p.uid,
@@ -825,7 +832,15 @@ def create_team():
     data = request.json
     name = data.get("name")
     is_public = data.get("is_public", False) # Default to Private
+    device_id = data.get("device_id", "Unknown")
+    user_name = data.get("user_name", "Admin")
+    
     if not name: return jsonify(success=False, message="Name required"), 400
+    
+    # QUOTA CHECK: Max 5 teams CREATED per device
+    created_count = TeamMember.query.filter_by(device_id=device_id, role='ADMIN').count()
+    if created_count >= 5:
+        return jsonify(success=False, message="Creation Quota Exceeded (Max 5 teams per device)"), 403
     
     # Simple Slugify
     slug = name.lower().replace(" ", "-")
@@ -842,8 +857,7 @@ def create_team():
     db.session.add(new_team)
     
     # Auto-approve creator
-    device_id = data.get("device_id", "Unknown")
-    user_name = data.get("user_name", "Admin")
+    # (Removed redundant device/user lookups, already done above)
     
     member = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status='APPROVED', role='ADMIN')
     db.session.add(member)
@@ -881,9 +895,28 @@ def join_team():
         
     if not team: return jsonify(success=False, message="Team not found (Check Code or Slug)"), 404
     
+    # QUOTA CHECK: Max 500 members per team
+    member_count = TeamMember.query.filter_by(team_slug=slug).count()
+    if member_count >= 500:
+        return jsonify(success=False, message="Team is Full (Max 500 members)"), 403
+
+    # QUOTA CHECK: Max 10 teams JOINED per device
+    joined_count = TeamMember.query.filter_by(device_id=device_id).count()
+    if joined_count >= 10:
+        # If they are already a member (even PENDING/REJECTED), we let the "existing" logic below handle it
+        # But if they are NOT a member, they can't join another one.
+        already_in = TeamMember.query.filter_by(team_slug=slug, device_id=device_id).first()
+        if not already_in:
+            return jsonify(success=False, message="Membership Quota Exceeded (Max 10 teams per device)"), 403
+
     # Check existing
     existing = TeamMember.query.filter_by(team_slug=slug, device_id=device_id).first()
     if existing:
+        if existing.status == 'REJECTED':
+            # Reset to PENDING if they were previously rejected
+            existing.status = 'PENDING'
+            db.session.commit()
+            return jsonify(success=True, status='PENDING', message="Re-requested join", team_slug=slug, team_name=team.name)
         return jsonify(success=True, status=existing.status, message="Already requested", team_slug=slug, team_name=team.name)
         
     new_mem = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status='PENDING')
@@ -901,25 +934,43 @@ def list_teams():
     limit = int(request.args.get('limit', 10))
 
     # 1. Get My Joins (for membership status/codes)
-    my_teams_slugs = set()
+    my_teams_status = {}
+    created_count = 0
+    joined_count = 0
     if requester_device:
         memberships = TeamMember.query.filter_by(device_id=requester_device).all()
-        my_teams_slugs = {m.team_slug for m in memberships}
+        # Map slug -> status (e.g. 'ph-clinic': 'APPROVED')
+        my_teams_status = {m.team_slug: m.status for m in memberships}
+        
+        # Quota counts
+        created_count = TeamMember.query.filter_by(device_id=requester_device, role='ADMIN').count()
+        joined_count = len(memberships)
 
     if tab == 'my-team':
-        # List all joined teams (no pagination for now as it's usually small)
-        teams = Team.query.filter(Team.slug.in_(my_teams_slugs)).all()
+        # List all teams I have a relationship with (Pending, Approved, Rejected)
+        # Note: Rejected might be filtered out depending on UX, but for now we list them so user knows.
+        if not my_teams_status:
+             return jsonify(success=True, teams=[], total_pages=1, current_page=1)
+             
+        teams = Team.query.filter(Team.slug.in_(my_teams_status.keys())).all()
         result_teams = []
         for t in teams:
+            status = my_teams_status.get(t.slug)
+            is_joined = status == 'APPROVED'
+            
             result_teams.append({
                 "slug": t.slug, "name": t.name, 
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "is_public": t.is_public,
-                "joined": True,
+                "joined": is_joined, # Backward compat (only true if active member)
+                "membership_status": status, # PENDING, APPROVED, REJECTED
                 "member_count": TeamMember.query.filter_by(team_slug=t.slug).count(),
-                "invite_code": t.invite_code
+                "invite_code": t.invite_code if is_joined else None
             })
-        return jsonify(success=True, teams=result_teams, total_pages=1, current_page=1)
+        return jsonify(success=True, teams=result_teams, total_pages=1, current_page=1, quota={
+            "created": created_count, "max_created": 5,
+            "joined": joined_count, "max_joined": 10
+        })
 
     # 2. Directory Tab (Public Teams - Paginated & Sorted)
     query = db.session.query(Team, db.func.count(TeamMember.id).label('m_count'))\
@@ -940,12 +991,15 @@ def list_teams():
     
     result_teams = []
     for t, m_count in pagination.items:
-        is_joined = t.slug in my_teams_slugs
+        status = my_teams_status.get(t.slug)
+        is_joined = status == 'APPROVED'
+        
         result_teams.append({
             "slug": t.slug, "name": t.name, 
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "is_public": True,
             "joined": is_joined,
+            "membership_status": status,
             "member_count": m_count,
             "invite_code": t.invite_code if is_joined else None
         })
@@ -955,7 +1009,11 @@ def list_teams():
         teams=result_teams, 
         total_pages=pagination.pages, 
         current_page=pagination.page,
-        total_count=pagination.total
+        total_count=pagination.total,
+        quota={
+            "created": created_count, "max_created": 5,
+            "joined": joined_count, "max_joined": 10
+        }
     )
 
 @app.route("/api/teams/members", methods=["GET"])

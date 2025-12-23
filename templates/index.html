@@ -83,31 +83,16 @@
           >
             📡 WiFi Sync
           </button>
-          <!-- Network Status -->
-          <div
-            id="networkStatus"
-            style="
-              font-size: 0.75rem;
-              font-weight: 600;
-              padding: 2px 8px;
-              border-radius: 12px;
-              background: #e0f2fe;
-              color: #0284c7;
-              display: inline-flex;
-              align-items: center;
-              gap: 4px;
-            "
+          <!-- Sync Status Button -->
+          <button
+            id="syncBtn"
+            class="sync-btn sync-idle"
+            title="Last Synced: Just now"
+            onclick="triggerSync(true)"
           >
-            <span
-              style="
-                width: 8px;
-                height: 8px;
-                background: #0284c7;
-                border-radius: 50%;
-              "
-            ></span>
-            Online
-          </div>
+            <span class="sync-icon">🔄</span>
+            <span id="syncText">Synced</span>
+          </button>
         </div>
         <div style="font-size: 0.85rem; color: #475569; font-weight: 500">
           <span id="headerCount">{{ patients|length }}</span> PatientRecords
@@ -328,29 +313,19 @@
             >
           </div>
 
-          <div
+            <div
             style="
-              margin-bottom: 1rem;
-              padding-bottom: 0.5rem;
+              padding: 1rem 1.25rem;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
               border-bottom: 1px solid #f1f5f9;
             "
           >
-            <label
-              style="
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                cursor: pointer;
-                font-size: 0.85rem;
-                color: #475569;
-              "
-            >
-              <input
-                type="checkbox"
-                id="toggleMyanmarDetails"
-                style="width: 16px; height: 16px"
-              />
-              🇲🇲 Myanmar Lunar Details
+            <span style="font-size: 0.85rem; color: #475569; font-weight: 600;">🇲🇲 Myanmar Lunar Details</span>
+            <label class="switch">
+              <input type="checkbox" id="toggleMyanmarDetails" onchange="if(window.calendar) window.calendar.refetchEvents();" />
+              <span class="slider round"></span>
             </label>
           </div>
 
@@ -1105,6 +1080,29 @@
       </div>
     </div>
     
+    <!-- Access Denied Modal -->
+    <div id="accessDeniedModal" class="modal-overlay" style="display:none; z-index: 10000; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);">
+      <div class="premium-modal" style="border: 2px solid #ef4444; text-align: center; padding: 2rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">⛔</div>
+        <h2 style="color: #1e293b; margin-bottom: 0.5rem; font-weight: 800;">Access Denied</h2>
+        <p id="accessDeniedMessage" style="color: #64748b; margin-bottom: 2rem;">
+          You don't have permission to access this team workspace. You may have been removed or your request was rejected.
+        </p>
+        
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <button onclick="location.reload()" class="btn" style="background: #0f172a; color:white; width: 100%; padding: 12px; font-weight: 600;">
+            Try Refreshing
+          </button>
+          <button onclick="document.getElementById('accessDeniedModal').style.display='none'; localStorage.removeItem('tb_team_slug'); localStorage.removeItem('tb_team_name'); location.reload();" class="btn" style="background: white; border: 1px solid #cbd5e1; color: #475569; width: 100%; padding: 12px; font-weight: 600;">
+            Switch to Guest Mode
+          </button>
+          <button onclick="document.getElementById('accessDeniedModal').style.display='none'; teamsModal.style.display='flex'; loadTeams();" class="btn" style="background: #f8fafc; color: #1e293b; border: 1px solid #e2e8f0; width: 100%; padding: 12px; font-weight: 600;">
+            View My Teams
+          </button>
+        </div>
+      </div>
+    </div>
+
     <style>
         .premium-modal {
             max-width: 440px;
