@@ -895,16 +895,14 @@ def join_team():
         
     if not team: return jsonify(success=False, message="Team not found (Check Code or Slug)"), 404
     
-    # QUOTA CHECK: Max 500 members per team
+    # QUOTA CHECK: Max 500 members per team (Bypassed for public/demo teams)
     member_count = TeamMember.query.filter_by(team_slug=slug).count()
-    if member_count >= 500:
+    if not team.is_public and member_count >= 500:
         return jsonify(success=False, message="Team is Full (Max 500 members)"), 403
 
     # QUOTA CHECK: Max 10 teams JOINED per device
     joined_count = TeamMember.query.filter_by(device_id=device_id).count()
     if joined_count >= 10:
-        # If they are already a member (even PENDING/REJECTED), we let the "existing" logic below handle it
-        # But if they are NOT a member, they can't join another one.
         already_in = TeamMember.query.filter_by(team_slug=slug, device_id=device_id).first()
         if not already_in:
             return jsonify(success=False, message="Membership Quota Exceeded (Max 10 teams per device)"), 403
@@ -912,18 +910,26 @@ def join_team():
     # Check existing
     existing = TeamMember.query.filter_by(team_slug=slug, device_id=device_id).first()
     if existing:
+        if team.is_public and existing.status != 'APPROVED':
+            existing.status = 'APPROVED'
+            db.session.commit()
+            return jsonify(success=True, status='APPROVED', message="Joined Team instantly!", team_slug=slug, team_name=team.name)
+            
         if existing.status == 'REJECTED':
-            # Reset to PENDING if they were previously rejected
             existing.status = 'PENDING'
             db.session.commit()
             return jsonify(success=True, status='PENDING', message="Re-requested join", team_slug=slug, team_name=team.name)
         return jsonify(success=True, status=existing.status, message="Already requested", team_slug=slug, team_name=team.name)
         
-    new_mem = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status='PENDING')
+    # If team is public, auto-approve
+    initial_status = 'APPROVED' if team.is_public else 'PENDING'
+    
+    new_mem = TeamMember(team_slug=slug, user_name=user_name, device_id=device_id, status=initial_status)
     db.session.add(new_mem)
     db.session.commit()
     
-    return jsonify(success=True, status='PENDING', team_slug=slug, team_name=team.name)
+    msg = "Joined Team instantly!" if team.is_public else "Requested join. Awaiting approval."
+    return jsonify(success=True, status=initial_status, message=msg, team_slug=slug, team_name=team.name)
 
 @app.route("/api/teams/list", methods=["GET"])
 def list_teams():

@@ -78,6 +78,19 @@ header h1 {
     background-color: rgba(14, 165, 233, 0.08) !important;
 }
 
+/* Instant Myanmar Details Toggle */
+.mm-details-hidden .lunar-detail {
+  display: none !important;
+}
+
+.mm-details-hidden .fc-day-sabbath {
+  background-color: transparent !important;
+}
+
+.mm-details-hidden .fc-day-sabbath::after {
+  display: none !important;
+}
+
 /* Sync Button Styles */
 .sync-btn {
   border: none;

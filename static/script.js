@@ -13,12 +13,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Hydrate Toggle State
   const toggleEl = document.getElementById('toggleMyanmarDetails');
+  const calendarWrapper = document.getElementById('calendar-view-wrapper');
+  
   if (toggleEl) {
       const savedToggle = localStorage.getItem('tb_mm_details_enabled');
-      toggleEl.checked = savedToggle === 'true';
+      const isChecked = savedToggle === 'true';
+      toggleEl.checked = isChecked;
+      
+      // Instant-off class on load
+      if (calendarWrapper) {
+          calendarWrapper.classList.toggle('mm-details-hidden', !isChecked);
+      }
       
       toggleEl.addEventListener('change', (e) => {
           localStorage.setItem('tb_mm_details_enabled', e.target.checked);
+          if (calendarWrapper) {
+              calendarWrapper.classList.toggle('mm-details-hidden', !e.target.checked);
+          }
           if (window.calendar) window.calendar.refetchEvents();
       });
   }
@@ -50,6 +61,34 @@ document.addEventListener('DOMContentLoaded', function() {
           return null;
       }
   };
+
+  window.prefetchMmDates = function(year) {
+      console.log(`[MmCal] Prefetching ${year}...`);
+      const start = new Date(year, 0, 1);
+      const end = new Date(year + 1, 0, 1);
+      let curr = new Date(start);
+      let count = 0;
+      while (curr < end) {
+          const key = curr.toISOString().split('T')[0];
+          if (!window._mmcalCache[key]) {
+              window.getMmDate(curr);
+              count++;
+          }
+          curr.setDate(curr.getDate() + 1);
+          // Yield to main thread every 100 days to prevent freeze
+          if (count % 100 === 0 && count > 0) {
+              // We'll just continue for now but ideally setTimeout
+          }
+      }
+      console.log(`[MmCal] Prefetched ${count} new dates.`);
+  };
+
+  // Kick off prefetch for current and next year in background
+  setTimeout(() => {
+    const curYear = new Date().getFullYear();
+    window.prefetchMmDates(curYear);
+    window.prefetchMmDates(curYear + 1);
+  }, 1000);
 
   
   // -- Toast Notification System --
@@ -529,9 +568,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
       modalDetails.innerHTML = `
         <div style="background: linear-gradient(to right, #f8fafc, #fff); padding: 1rem; border-left: 4px solid ${eventData.backgroundColor}; border-radius: 8px; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.8rem;">
                <div style="font-size:1.1rem; font-weight:700; color:#334155;">${patient.name}</div>
-               <div style="font-size:0.8rem; background:#f1f5f9; padding:2px 8px; border-radius:12px; color:#64748b;">${patient.regime}</div>
+               <div style="display:flex; gap:6px;">
+                 <div style="font-size:0.75rem; background:#f1f5f9; padding:2px 8px; border-radius:12px; color:#64748b; font-weight:600;">Regime: ${patient.regime}</div>
+                 <div style="font-size:0.75rem; background:${eventData.backgroundColor}22; padding:2px 8px; border-radius:12px; color:${eventData.backgroundColor}; font-weight:600;">Cycle: ${eventData.title.split(' - ').pop()}</div>
+               </div>
            </div>
            <div style="font-size:0.85rem; color:#64748b;">
              ID: <span style="font-family:monospace;">${patient.uid ? patient.uid.slice(0,4) : 'N/A'}</span> • ${patient.age}y/${patient.sex}
@@ -2021,6 +2063,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if(teamsBtn) {
         teamsBtn.addEventListener('click', () => {
+            const deviceLabel = document.getElementById('deviceNameLabel');
+            if(deviceLabel) deviceLabel.innerText = localStorage.getItem('tb_device_name') || 'Guest Device';
+            
             teamsModal.style.display = 'flex'; // Centered
             loadTeams();
             updateMyTeamUI();
@@ -2389,9 +2434,11 @@ function updateMyTeamUI() {
     const desc = document.getElementById('myTeamDesc');
     const container = document.getElementById('teamActionsContainer');
     const badge = document.getElementById('teamBadge');
+    const btnLabel = document.getElementById('teamBtnLabel');
     
     if(slug) {
         if(display) display.innerText = name;
+        if(btnLabel) btnLabel.innerText = name;
         if(desc) desc.innerText = "Active Workspace";
         if(badge) {
             badge.style.display = 'inline-block';

@@ -60,7 +60,7 @@
               position: relative;
             "
           >
-            👥 Teams
+            👥 <span id="teamBtnLabel">Teams</span>
             <span id="teamRequestBadge" style="display:none; position:absolute; top:-2px; right:-2px; width:8px; height:8px; background:#ef4444; border-radius:50%; border:1px solid white;"></span>
           </button>
 
@@ -432,7 +432,10 @@
         "
       >
         <div class="modal-header">
-          <h4>Team Management</h4>
+          <div>
+            <h4>Team Management</h4>
+            <div id="deviceDisplay" style="font-size: 0.7rem; color: #64748b; font-weight: 500; margin-top: 2px;">Device: <span id="deviceNameLabel">...</span></div>
+          </div>
           <button id="closeTeamsModal" class="close-btn">&times;</button>
         </div>
         
