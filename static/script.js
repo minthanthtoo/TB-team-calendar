@@ -81,7 +81,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.currentCalendarDuration = 'month'; // 'week', 'month', 'year'
   window.currentCalendarType = 'grid'; // 'grid', 'list'
 
-  function applyCalendarView() {
+  window.applyCalendarView = function() {
     if(!window.calendar) return;
     
     const calEl = document.getElementById('calendar');
@@ -117,6 +117,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
     updateButtonActiveStates();
   }
+
+  window.selectYearMonth = function(cardEl, startTs, endTs) {
+      const isAlreadySelected = cardEl && cardEl.classList.contains('selected-month');
+      
+      // Clear legacy/all selections first
+      document.querySelectorAll('.year-month-card').forEach(el => el.classList.remove('selected-month'));
+
+      if (isAlreadySelected) {
+          // TOGGLE OFF: Deselecting
+          console.log('[YearGrid] Deselecting month. Resetting to full year.');
+          
+          // Calculate year boundaries from the month timestamp
+          const date = new Date(startTs);
+          const yearStart = new Date(date.getFullYear(), 0, 1);
+          const yearEnd = new Date(date.getFullYear(), 11, 31, 23, 59, 59);
+          
+          if(window.updateRegistryStatus) {
+              window.updateRegistryStatus(yearStart, yearEnd);
+          }
+      } else {
+          // TOGGLE ON: Selecting new month
+          if(cardEl) cardEl.classList.add('selected-month');
+          
+          if(window.updateRegistryStatus) {
+              console.log('[YearGrid] Selecting month:', new Date(startTs).toLocaleDateString());
+              window.updateRegistryStatus(new Date(startTs), new Date(endTs));
+          }
+      }
+  };
 
   function renderYearSummaryGrid(targetYear) {
     const grid = document.getElementById('year-summary-grid');
@@ -175,27 +204,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const endOfMonth = new Date(year, idx + 1, 0, 23, 59, 59);
 
         html += `
-            <div class="year-month-card" onclick="
-                window.currentCalendarDuration='month'; 
-                
-                // LOCK: Prevent datesSet from overriding our precise filter for 600ms
-                window._ignoreNextDatesSet = true;
-                setTimeout(() => { window._ignoreNextDatesSet = false; }, 600);
-                
-                // Navigate to the 1st of the month
-                window.calendar.gotoDate('${year}-${String(idx+1).padStart(2,'0')}-01'); 
-                // Apply view, which shifts to dayGridMonth/listMonth
-                applyCalendarView();
-                
-                // FORCE Update: Use explicit month boundaries calculated above
-                // This ensures we show STRICTLY this month's data, not FC's padded view
-                setTimeout(() => {
-                    if(window.updateRegistryStatus) {
-                        console.log('[YearMonth] Enforcing precise filter for:', '${m}', '${year}');
-                        window.updateRegistryStatus(new Date(${startOfMonth.getTime()}), new Date(${endOfMonth.getTime()}));
-                    }
-                }, 50); // Faster trigger to ensure it sets state quickly
-            ">
+            <div class="year-month-card" onclick="window.selectYearMonth(this, ${startOfMonth.getTime()}, ${endOfMonth.getTime()})">
                 <div class="year-month-name">
                     <span>${m}</span>
                     <span style="font-size:0.6rem; font-weight: normal; opacity:0.6;">${year}</span>
@@ -238,9 +247,9 @@ document.addEventListener('DOMContentLoaded', function() {
   window.calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
     initialView: initialViewType,
     headerToolbar: {
-      left: isMobile ? 'prev,next' : 'prev,next today',
-      center: 'title',
-      right: 'btnWeek,btnMonth,btnYear btnGrid,btnList' // Always show full controls
+      left: 'prev,next today', 
+      center: '',
+      right: 'title btnWeek,btnMonth,btnYear btnGrid,btnList' 
     },
     customButtons: {
         btnWeek: { text: 'Week', click: function() { window.currentCalendarDuration = 'week'; applyCalendarView(); } },
@@ -267,6 +276,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     },
     titleFormat: { year: 'numeric', month: isMobile ? 'short' : 'long' },
+    views: {
+        multiMonthYear: {
+            titleFormat: { year: 'numeric' } // Force "2026" for year view
+        }
+    },
     height: 'auto', // Adjust height automatically
     themeSystem: 'standard', // we use our own CSS overrides
     events: function(fetchInfo, successCallback, failureCallback) {
@@ -1398,7 +1412,9 @@ window.hydrateLocalData = function() {
             if(window.renderPatientList) window.renderPatientList();
             if(window.updateDashboardCounts) window.updateDashboardCounts();
             if(window.updateRegistryStatus) window.updateRegistryStatus();
-            if(window.calendar) window.calendar.refetchEvents();
+            if(window.calendar && typeof window.calendar.refetchEvents === 'function') {
+                window.calendar.refetchEvents();
+            }
         } else {
             console.log("[PWA] No valid cache for current team.");
         }
@@ -1701,10 +1717,17 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 window.updateRegistryStatus = async function(viewStart, viewEnd) {
     // Auto-detect current view if not provided (e.g. background sync)
-    if(!viewStart && !viewEnd && window.calendar) {
-        const view = window.calendar.view;
-        viewStart = view.activeStart;
-        viewEnd = view.activeEnd;
+    if(!viewStart && !viewEnd) {
+        if (window.calendar && window.calendar.view) {
+            const view = window.calendar.view;
+            viewStart = view.activeStart;
+            viewEnd = view.activeEnd;
+        } else {
+           // Fallback if calendar not ready: use current month/year
+           const now = new Date();
+           viewStart = new Date(now.getFullYear(), now.getMonth(), 1);
+           viewEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        }
     }
     
     console.log(`[Registry Update] Filtering for: ${viewStart?.toLocaleDateString()} to ${viewEnd?.toLocaleDateString()}`);
@@ -1756,9 +1779,23 @@ window.updateRegistryStatus = async function(viewStart, viewEnd) {
                                 if(d.dataset.patientUid === p.uid) {
                                     d.classList.add('dot-highlight');
                                     d.classList.remove('dot-dim');
+                                    
+                                    // Smart Tooltip Positioning
+                                    // Get dot position relative to offset parent
+                                    const rect = d.offsetLeft;
+                                    const parentWidth = d.offsetParent ? d.offsetParent.offsetWidth : 100;
+                                    
+                                    // Reset classes
+                                    d.classList.remove('tooltip-left', 'tooltip-right');
+                                    
+                                    if (rect < 40) {
+                                        d.classList.add('tooltip-left');
+                                    } else if (rect > parentWidth - 40) {
+                                        d.classList.add('tooltip-right');
+                                    }
                                 } else {
                                     d.classList.add('dot-dim');
-                                    d.classList.remove('dot-highlight');
+                                    d.classList.remove('dot-highlight', 'tooltip-left', 'tooltip-right');
                                 }
                             });
                             grid?.classList.add('grid-dimming');
