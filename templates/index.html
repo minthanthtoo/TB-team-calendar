@@ -279,8 +279,15 @@
       <!-- MAIN LAYOUT (Calendar + Sidebar) -->
       <div class="main-layout">
         <!-- Calendar Section -->
-        <div id="calendar-container">
-          <div id="calendar"></div>
+        <div id="calendar-view-wrapper" class="scrollable-calendar-view">
+          <div id="calendar-container" style="position: relative;">
+            <div id="calendar"></div>
+            <div id="year-summary-grid" style="display: none;"></div>
+          </div>
+          <div class="scroll-nav-controls">
+            <button class="scroll-nav-btn" onclick="scrollToTop('calendar-view-wrapper')" title="Scroll to Top">↑</button>
+            <button class="scroll-nav-btn" onclick="scrollToBottom('calendar-view-wrapper')" title="Scroll to Bottom">↓</button>
+          </div>
         </div>
 
         <!-- Legend / Patient Registry Sidebar -->

@@ -37,12 +37,17 @@ document.addEventListener('DOMContentLoaded', function() {
         statusEl.innerHTML = '<span style="width: 8px; height: 8px; background: #10b981; border-radius: 50%;"></span> Online';
         statusEl.style.background = '#d1fae5';
         statusEl.style.color = '#059669';
+        window._offlineToastShown = false; // Reset flag when back online
     } else {
         const hasCachedData = window.allPatientData && window.allPatientData.length > 0;
         statusEl.innerHTML = `<span style="width: 8px; height: 8px; background: #ef4444; border-radius: 50%;"></span> Offline ${hasCachedData ? '(Viewing Cached Data)' : ''}`;
         statusEl.style.background = '#fee2e2';
         statusEl.style.color = '#b91c1c';
-        showToast("You are offline. Changes may not save.", "error");
+        
+        if (!window._offlineToastShown) {
+          showToast("You are offline. Changes may not save.", "error");
+          window._offlineToastShown = true;
+        }
     }
   }
 
@@ -73,13 +78,193 @@ document.addEventListener('DOMContentLoaded', function() {
   // -1 aligns JDN to match user expectation (likely due to Noon vs Midnight JDN definition)
   const MM_CAL_OFFSET = -1; 
 
+  window.currentCalendarDuration = 'month'; // 'week', 'month', 'year'
+  window.currentCalendarType = 'grid'; // 'grid', 'list'
+
+  function applyCalendarView() {
+    if(!window.calendar) return;
+    
+    const calEl = document.getElementById('calendar');
+    const yearGridEl = document.getElementById('year-summary-grid');
+    
+    // Default visibility: show harness, hide custom grid
+    calEl.classList.remove('yearly-grid-active');
+    yearGridEl.style.display = 'none';
+
+    let viewName = 'dayGridMonth'; // fallback
+    
+    if(window.currentCalendarDuration === 'week') {
+        viewName = window.currentCalendarType === 'grid' ? 'dayGridWeek' : 'listWeek';
+    } else if(window.currentCalendarDuration === 'month') {
+        viewName = window.currentCalendarType === 'grid' ? 'dayGridMonth' : 'listMonth';
+    } else if(window.currentCalendarDuration === 'year') {
+        if(window.currentCalendarType === 'grid') {
+            // SPECIAL CASE: Yearly Chart (12 Cells Summary)
+            calEl.classList.add('yearly-grid-active');
+            yearGridEl.style.display = 'grid'; // Harness hiding handled by CSS
+            viewName = 'multiMonthYear'; // Set underlying view so navigation moves by year
+        } else {
+            viewName = 'listYear';
+        }
+    }
+    
+    window.calendar.changeView(viewName);
+    
+    // If we just enabled yearly grid, render it for the current year
+    if (calEl.classList.contains('yearly-grid-active')) {
+      renderYearSummaryGrid(window.calendar.view.currentStart.getFullYear());
+    }
+
+    updateButtonActiveStates();
+  }
+
+  function renderYearSummaryGrid(targetYear) {
+    const grid = document.getElementById('year-summary-grid');
+    if(!grid) return;
+    
+    // Ensure grid is inside #calendar to keep header on top
+    const calEl = document.getElementById('calendar');
+    if(grid.parentNode !== calEl) {
+        calEl.appendChild(grid);
+    }
+
+    const year = targetYear || new Date().getFullYear();
+    const months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ];
+    
+    let html = '';
+    
+    // Use global patient data for accurate dots
+    const allPatients = window.allPatientData || [];
+    const allYearEvents = [];
+    allPatients.forEach(p => {
+        (p.events || []).forEach(e => {
+            const d = new Date(e.start);
+            if(d.getFullYear() === year) {
+                allYearEvents.push({
+                    month: d.getMonth(),
+                    color: e.color || '#0ea5e9',
+                    uid: p.uid,
+                    title: e.title,
+                    date: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+                    regime: p.regime || 'IR'
+                });
+            }
+        });
+    });
+    
+    months.forEach((m, idx) => {
+        const monthEvents = allYearEvents.filter(e => e.month === idx);
+        
+        // Render dots for events with patient-specific colors and highlighting support
+        // We limit dots to a reasonable number to avoid crowded UI but show range
+        let dotsHtml = '';
+        monthEvents.slice(0, 30).forEach(e => {
+            dotsHtml += `<span class="month-event-dot" 
+                data-patient-uid="${e.uid}" 
+                data-label="${e.date} (${e.regime})"
+                style="background-color: ${e.color};" 
+                title="${e.title}: ${e.date}"></span>`;
+        });
+        if(monthEvents.length > 30) dotsHtml += `<span style="font-size:0.6rem; color:#94a3b8; margin-left:2px;">+</span>`;
+
+        // Drill-down logic with explicit month boundaries
+        const startOfMonth = new Date(year, idx, 1);
+        const endOfMonth = new Date(year, idx + 1, 0, 23, 59, 59);
+
+        html += `
+            <div class="year-month-card" onclick="
+                window.currentCalendarDuration='month'; 
+                
+                // LOCK: Prevent datesSet from overriding our precise filter for 600ms
+                window._ignoreNextDatesSet = true;
+                setTimeout(() => { window._ignoreNextDatesSet = false; }, 600);
+                
+                // Navigate to the 1st of the month
+                window.calendar.gotoDate('${year}-${String(idx+1).padStart(2,'0')}-01'); 
+                // Apply view, which shifts to dayGridMonth/listMonth
+                applyCalendarView();
+                
+                // FORCE Update: Use explicit month boundaries calculated above
+                // This ensures we show STRICTLY this month's data, not FC's padded view
+                setTimeout(() => {
+                    if(window.updateRegistryStatus) {
+                        console.log('[YearMonth] Enforcing precise filter for:', '${m}', '${year}');
+                        window.updateRegistryStatus(new Date(${startOfMonth.getTime()}), new Date(${endOfMonth.getTime()}));
+                    }
+                }, 50); // Faster trigger to ensure it sets state quickly
+            ">
+                <div class="year-month-name">
+                    <span>${m}</span>
+                    <span style="font-size:0.6rem; font-weight: normal; opacity:0.6;">${year}</span>
+                </div>
+                <div class="month-event-summary">
+                    ${dotsHtml}
+                </div>
+            </div>
+        `;
+    });
+    
+    grid.innerHTML = html;
+  }
+
+  function updateButtonActiveStates() {
+    // Update Active States for Custom Buttons
+    document.querySelectorAll('.fc-btnWeek-button, .fc-btnMonth-button, .fc-btnYear-button').forEach(btn => btn.classList.remove('fc-button-active'));
+    document.querySelectorAll('.fc-btnGrid-button, .fc-btnList-button').forEach(btn => btn.classList.remove('fc-button-active'));
+    
+    const durClass = `.fc-btn${window.currentCalendarDuration.charAt(0).toUpperCase() + window.currentCalendarDuration.slice(1)}-button`;
+    const typeClass = `.fc-btn${window.currentCalendarType.charAt(0).toUpperCase() + window.currentCalendarType.slice(1)}-button`;
+    
+    const activeDur = document.querySelector(durClass);
+    const activeType = document.querySelector(typeClass);
+    if(activeDur) activeDur.classList.add('fc-button-active');
+    if(activeType) activeType.classList.add('fc-button-active');
+  }
+
+  window.scrollToTop = function(elementId) {
+    const el = document.getElementById(elementId);
+    if(el) el.scrollTop = 0;
+  }
+
+  window.scrollToBottom = function(elementId) {
+    const el = document.getElementById(elementId);
+    if(el) el.scrollTop = el.scrollHeight;
+  }
+
   // Initialize Calendar
   window.calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
     initialView: initialViewType,
     headerToolbar: {
       left: isMobile ? 'prev,next' : 'prev,next today',
       center: 'title',
-      right: isMobile ? 'listMonth,dayGridMonth' : 'dayGridMonth,listMonth'
+      right: 'btnWeek,btnMonth,btnYear btnGrid,btnList' // Always show full controls
+    },
+    customButtons: {
+        btnWeek: { text: 'Week', click: function() { window.currentCalendarDuration = 'week'; applyCalendarView(); } },
+        btnMonth: { text: 'Month', click: function() { window.currentCalendarDuration = 'month'; applyCalendarView(); } },
+        btnYear: { text: 'Year', click: function() { window.currentCalendarDuration = 'year'; applyCalendarView(); } },
+        btnGrid: { text: 'Grid', click: function() { window.currentCalendarType = 'grid'; applyCalendarView(); } },
+        btnList: { text: 'List', click: function() { window.currentCalendarType = 'list'; applyCalendarView(); } }
+    },
+    datesSet: function(info) {
+        console.log('[datesSet] Fired. View:', info.view.type);
+        
+        // Filter sidebar to only show patients with events in this view
+        // SKIP if we are locked (during drill-down transition)
+        if(window.updateRegistryStatus && !window._ignoreNextDatesSet) {
+            window.updateRegistryStatus(info.start, info.end);
+        } else {
+             console.log('[datesSet] Skipped sidebar update due to lock.');
+        }
+
+        // If Yearly Grid is active, refresh it based on the current navigated year
+        const calEl = document.getElementById('calendar');
+        if(calEl && calEl.classList.contains('yearly-grid-active')) {
+           renderYearSummaryGrid(info.view.currentStart.getFullYear());
+        }
     },
     titleFormat: { year: 'numeric', month: isMobile ? 'short' : 'long' },
     height: 'auto', // Adjust height automatically
@@ -115,7 +300,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 });
                 successCallback(events);
-                showToast("Viewing Offline Calendar", "info");
+                if (!window._offlineToastShown) {
+                    showToast("Viewing Offline Calendar", "info");
+                    window._offlineToastShown = true;
+                }
             } else {
                 failureCallback(err);
             }
@@ -175,7 +363,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 else if (mp === 3) lunarTitle = "🌑 New Moon";
                 else {
                     const phase = (mp === 0) ? "လဆန်း" : "လဆုတ်";
-                    lunarTitle = `${phase} ${mf} ရက်`;
+                    // Add newline between phase and day number
+                    lunarTitle = `${phase}\n${mf} ရက်`;
                 }
 
                 if (isSabbath === 1) lunarTitle += " (ဥပုသ်နေ့)";
@@ -225,6 +414,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   calendar.render();
+  applyCalendarView(); // Set initial button states
   window.calendar = calendar;
 
   // -- Event Editor Modal Logic --
@@ -1509,7 +1699,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial Dashboard Update
     window.updateDashboardCounts();
 });
-window.updateRegistryStatus = async function() {
+window.updateRegistryStatus = async function(viewStart, viewEnd) {
+    // Auto-detect current view if not provided (e.g. background sync)
+    if(!viewStart && !viewEnd && window.calendar) {
+        const view = window.calendar.view;
+        viewStart = view.activeStart;
+        viewEnd = view.activeEnd;
+    }
+    
+    console.log(`[Registry Update] Filtering for: ${viewStart?.toLocaleDateString()} to ${viewEnd?.toLocaleDateString()}`);
+
     try {
         const team = localStorage.getItem('tb_team_slug') || '';
         const deviceId = localStorage.getItem('tb_device_name') || 'Guest';
@@ -1534,8 +1733,59 @@ window.updateRegistryStatus = async function() {
         });
         
         patients.forEach(p => {
+            // View-based filtering: Only show patients with events in the current view
+            if(viewStart && viewEnd) {
+                const hasEventInView = (p.events || []).some(e => {
+                    const eDate = new Date(e.start);
+                    return eDate >= viewStart && eDate <= viewEnd;
+                });
+                if(!hasEventInView) return; // Skip if no events in view
+            }
+
             const itemEl = document.querySelector(`.patient-item[data-uid="${p.uid}"]`);
-            if(itemEl) itemEl.style.display = 'block';
+            if(itemEl) {
+                itemEl.style.display = 'block';
+                
+                // Add hover & click listeners for yearly dot highlighting if not already added
+                if(!itemEl.dataset.hlInit) {
+                    const highlight = (active) => {
+                        const dots = document.querySelectorAll('.month-event-dot');
+                        const grid = document.getElementById('year-summary-grid');
+                        if(active) {
+                            dots.forEach(d => {
+                                if(d.dataset.patientUid === p.uid) {
+                                    d.classList.add('dot-highlight');
+                                    d.classList.remove('dot-dim');
+                                } else {
+                                    d.classList.add('dot-dim');
+                                    d.classList.remove('dot-highlight');
+                                }
+                            });
+                            grid?.classList.add('grid-dimming');
+                        } else {
+                            dots.forEach(d => d.classList.remove('dot-highlight', 'dot-dim'));
+                            grid?.classList.remove('grid-dimming');
+                        }
+                    };
+
+                    itemEl.addEventListener('mouseenter', () => !itemEl.classList.contains('item-selected') && highlight(true));
+                    itemEl.addEventListener('mouseleave', () => !itemEl.classList.contains('item-selected') && highlight(false));
+                    
+                    itemEl.addEventListener('click', (e) => {
+                        // Toggle selected state for touch/persistent highlight
+                        const isSelected = itemEl.classList.toggle('item-selected');
+                        
+                        // Clear others
+                        document.querySelectorAll('.patient-item').forEach(other => {
+                            if(other !== itemEl) other.classList.remove('item-selected');
+                        });
+                        
+                        highlight(isSelected);
+                    });
+                    
+                    itemEl.dataset.hlInit = 'true';
+                }
+            }
 
             const statusEl = document.getElementById(`status-${p.uid}`);
             const progressEl = document.getElementById(`progress-${p.uid}`);
@@ -1577,32 +1827,6 @@ window.updateRegistryStatus = async function() {
     } catch (e) {
         console.error("Failed to update registry status:", e);
     }
-}
-
-// -- Helper for Timeline Interactions --
-window.editTimelineEvent = function(uid, eventId) {
-    const p = window.allPatientData.find(x => x.uid === uid);
-    if(!p) return;
-    
-    // Find event roughly
-    const evt = p.events.find(e => e.id == eventId);
-    if(!evt) return;
-
-    // Convert to structure expected by openEventEditor
-    const eventData = {
-        id: evt.id,
-        title: evt.title,
-        startStr: evt.start, 
-        backgroundColor: evt.color || 'var(--primary)',
-        extendedProps: {
-            outcome: evt.outcome,
-            remark: evt.remark,
-            missed_days: evt.missed_days,
-            patient: p // Included just in case, though passed separately
-        }
-    };
-    
-    window.openEventEditor(eventData, p);
 }
 
 // -- Helper for Timeline Interactions --
@@ -2249,12 +2473,18 @@ window.triggerLeaveFlow = function(slug) {
          .then(data => {
              if(data.success) {
                  showToast("Left team successfully.");
-                 localStorage.removeItem('tb_team_slug');
-                 localStorage.removeItem('tb_team_name');
-                 localStorage.removeItem('tb_team_invite_code');
-                 updateMyTeamUI();
+                 
+                 // Only clear active workspace if it's the team we just left
+                 const currentSlug = localStorage.getItem('tb_team_slug');
+                 if(currentSlug === slug) {
+                     localStorage.removeItem('tb_team_slug');
+                     localStorage.removeItem('tb_team_name');
+                     localStorage.removeItem('tb_team_invite_code');
+                     updateMyTeamUI();
+                 }
+                 
                  loadTeams();
-                 window.location.reload(); // Clean state
+                 // window.location.reload(); // Removed reload for smoother UI
              } else {
                  showToast(data.message || "Failed to leave", "error");
              }
@@ -2338,18 +2568,21 @@ window.executeDisband = function(slug) {
             
             showToast("Team Disbanded & Backup Downloaded.");
             
-            // Reset Local State
-            localStorage.removeItem('tb_team_slug');
-            localStorage.removeItem('tb_team_name');
-            localStorage.removeItem('tb_team_status');
-            localStorage.removeItem('tb_team_invite_code');
+            // Reset Local State only if disbanded team was active
+            const currentSlug = localStorage.getItem('tb_team_slug');
+            if(currentSlug === slug) {
+                localStorage.removeItem('tb_team_slug');
+                localStorage.removeItem('tb_team_name');
+                localStorage.removeItem('tb_team_status');
+                localStorage.removeItem('tb_team_invite_code');
+            }
             
             setTimeout(() => {
                 document.getElementById('disbandModal').style.display = 'none';
                 updateMyTeamUI();
                 loadTeams();
                 if(window.refreshPatientDataAndUI) window.refreshPatientDataAndUI();
-            }, 2000);
+            }, 1000);
         } else {
             throw new Error(res.message);
         }
