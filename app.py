@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 import random
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cycles.db'
+# Use environment variable for DB path (Render persistence), fallback to local
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///cycles.db')
 db = SQLAlchemy(app)
 
 # ---- MODELS ----

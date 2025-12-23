@@ -5,7 +5,7 @@ __pycache__/
 *.pyd
 *.bak
 venv/
-instance/*.db  # optional, if you don't want to commit your local SQLite
+*.db
 .DS_Store
 
 # IDEs
