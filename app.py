@@ -800,14 +800,13 @@ def commit_staged():
             
             for i in sorted(del_indices_to_commit, reverse=True):
                 if i < len(current_deleted): current_deleted.pop(i)
-                
-            DEVICE_STAGING[d_name]["timestamp"] = datetime.now()
-
-        return jsonify(success=True, count=total_merged)
+            
+            return jsonify(success=True, message=f"Merged {total_merged} items.")
 
     except Exception as e:
-        print(e)
+        print("Error committing staged:", e)
         return jsonify(success=False, message=str(e)), 500
+
 
 # ---- CORS ----
 @app.after_request
